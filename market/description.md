@@ -62,4 +62,4 @@ You can also change the public and backend ports, online mode, the server-list v
 - 1.21.5 and older clients can't show dialog screens or locator-bar waypoints, so those are skipped for them.
 - Built for Pumpkin 26.3 (plugin API v0.1).
 
-Open source under GPL-3.0. Version mappings come from the ViaVersion project's mapping data. Please report any disconnect message on GitHub so it can be fixed.
+Open source under GPL-3.0. Please report any disconnect message on GitHub so it can be fixed.
