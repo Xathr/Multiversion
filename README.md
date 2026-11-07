@@ -81,6 +81,15 @@ The plugin asks Pumpkin for `network.tcp` (listen + connect to Pumpkin), `http.o
 session server), `fs.read.data` and `fs.write.data` (its config). The `pumpkin-settings.txt` snippet
 pre-approves them in `[plugins.overrides.multiversion]`; otherwise Pumpkin asks on the console at first load.
 
+## Bedrock players in the console
+
+Bedrock players connect to Pumpkin directly on its Bedrock port, not through this plugin, but the
+plugin still logs them like Java players, with their Bedrock version and device:
+
+```
+[multiversion] Steve [203.0.113.7:51234] (Bedrock 1.26.60, Android) uuid 0000... joined (native Bedrock connection)
+```
+
 ## Configuration (`plugins/data/multiversion/config.toml`)
 
 ```toml

@@ -18,6 +18,8 @@ pub mod translate;
 #[cfg(target_arch = "wasm32")]
 pub mod auth;
 #[cfg(target_arch = "wasm32")]
+pub mod bedrock_log;
+#[cfg(target_arch = "wasm32")]
 pub mod conn;
 #[cfg(target_arch = "wasm32")]
 pub mod proxy;
@@ -76,6 +78,9 @@ mod plugin {
             // can still call our other hooks (and unload us on shutdown) in between.
             crate::proxy::start(config).map_err(|e| format!("multiversion: {e}"))?;
             context.schedule_repeating_task(1, 1, |_server| crate::proxy::tick());
+            // Bedrock players reach Pumpkin directly; log their version and device the same way.
+            context.register_event_handler::<pumpkin_plugin_api::events::PlayerJoinEvent, _>(crate::bedrock_log::JoinLog, pumpkin_plugin_api::events::EventPriority::Lowest, false)?;
+            context.register_event_handler::<pumpkin_plugin_api::events::PlayerLeaveEvent, _>(crate::bedrock_log::LeaveLog, pumpkin_plugin_api::events::EventPriority::Lowest, false)?;
             Ok(())
         }
 

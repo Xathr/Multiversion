@@ -19,7 +19,7 @@
 - 🔁 **Full protocol translation**: chunks, blocks, items with all their data, entities, inventories, recipes, chat, sounds, particles and commands are converted packet by packet, version step by version step
 - 🔐 **Real online mode**: players are verified with Mojang, and their real UUID, skin and IP reach Pumpkin through signed Velocity-style forwarding
 - 🎛️ **You choose who joins**: allow every version, a family like `1.21.*`, or a range like `1.21.5-26.3`, and deny specific ones
-- 🧾 **Clear console logs**: every join and leave shows the player's version and address
+- 🧾 **Clear console logs**: every join and leave shows the player's version and address, including Bedrock players' version and device
 - 🧱 **Sensible stand-ins**: blocks, items and mobs an older client doesn't have appear as their closest match
 - 🪶 **Self-contained**: one `.wasm` file and one config file
 
