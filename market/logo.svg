@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2433"/>
+      <stop offset="1" stop-color="#0e131c"/>
+    </linearGradient>
+    <linearGradient id="top" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffb066"/>
+      <stop offset="1" stop-color="#ff6b2c"/>
+    </linearGradient>
+    <linearGradient id="left" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e2561c"/>
+      <stop offset="1" stop-color="#b8410f"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c94a14"/>
+      <stop offset="1" stop-color="#93330a"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- three version "lanes" converging into one block -->
+  <g fill="none" stroke-linecap="round" stroke-width="22">
+    <path d="M 70 150 C 150 150, 160 236, 214 250" stroke="#4ea1ff"/>
+    <path d="M 60 256 L 206 256" stroke="#3ecf8e"/>
+    <path d="M 70 362 C 150 362, 160 276, 214 262" stroke="#b78cff"/>
+  </g>
+  <circle cx="70" cy="150" r="22" fill="#4ea1ff"/>
+  <circle cx="60" cy="256" r="22" fill="#3ecf8e"/>
+  <circle cx="70" cy="362" r="22" fill="#b78cff"/>
+  <!-- isometric block: the server -->
+  <g transform="translate(338 256)">
+    <polygon points="0,-118 112,-56 0,6 -112,-56" fill="url(#top)"/>
+    <polygon points="-112,-56 0,6 0,130 -112,68" fill="url(#left)"/>
+    <polygon points="112,-56 0,6 0,130 112,68" fill="url(#right)"/>
+    <polyline points="-112,-56 0,6 112,-56" fill="none" stroke="#ffd2a8" stroke-width="5" stroke-linejoin="round" opacity=".55"/>
+    <line x1="0" y1="6" x2="0" y2="130" stroke="#7a2a08" stroke-width="5" opacity=".6"/>
+  </g>
+</svg>
