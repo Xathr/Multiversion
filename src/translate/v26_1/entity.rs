@@ -82,16 +82,15 @@ impl Entities {
         w.raw(r.remaining());
         out.push((super::ids::new::ADD_ENTITY, w.into_inner()));
         if ty == entity_type("sulfur_cube") {
-            // Tag the stand-in slime with the real mob's name (index 2 custom name, 3 visible).
+            // Tag the stand-in slime with the real mob's name (index 2 custom name). The name isn't
+            // forced visible (index 3), so like any named mob it shows only when the player looks
+            // at it, not through walls or from far away.
             let mut m = Writer::new();
             m.varint(entity_id);
             m.u8(2);
             m.varint(ty::OPT_COMPONENT);
             m.bool(true);
             nbt::write(&mut m, &Tag::String("Sulfur Cube".into()));
-            m.u8(3);
-            m.varint(ty::BOOL);
-            m.bool(true);
             m.u8(0xff);
             out.push((super::ids::old::SET_ENTITY_DATA, m.into_inner()));
         }
@@ -152,7 +151,13 @@ impl Entities {
             if !drop {
                 w.u8(index);
                 w.varint(t);
-                w.raw(&value.buf);
+                if sulfur_cube && index == 2 && t == ty::OPT_COMPONENT && value.buf == [0] {
+                    // "No custom name" from the server would erase the stand-in's label: keep it.
+                    w.bool(true);
+                    nbt::write(&mut w, &Tag::String("Sulfur Cube".into()));
+                } else {
+                    w.raw(&value.buf);
+                }
             }
         }
         Ok(w.into_inner())
@@ -381,6 +386,42 @@ mod tests {
         let slime = d::OLD_ENTITY_NAMES.iter().position(|n| *n == "slime").unwrap() as i32;
         assert_eq!(r.varint().unwrap(), slime);
         assert_eq!(out[1].0, super::super::ids::old::SET_ENTITY_DATA);
+    }
+
+    #[test]
+    fn sulfur_cube_label_survives_cleared_name_and_is_not_forced_visible() {
+        let items = Items::new(Dir::ToClient);
+        let misc = Misc::new();
+        let mut e = Entities::default();
+        e.types.insert(5, entity_type("sulfur_cube"));
+        let mut p = Writer::new();
+        p.varint(5);
+        p.u8(2); // custom name: none
+        p.varint(ty::OPT_COMPONENT);
+        p.bool(false);
+        p.u8(0xff);
+        let out = e.set_entity_data(&items, &misc, &p.buf).unwrap();
+        let mut r = Reader::new(&out);
+        assert_eq!(r.varint().unwrap(), 5);
+        assert_eq!(r.u8().unwrap(), 2);
+        assert_eq!(r.varint().unwrap(), ty::OPT_COMPONENT);
+        assert!(r.bool().unwrap(), "label kept");
+        let raw = r.remaining();
+        assert!(raw.windows(11).any(|w| w == b"Sulfur Cube"));
+        assert_eq!(*raw.last().unwrap(), 0xff);
+        // the spawn-time label packet sets only the name (index 2), not "always visible" (index 3)
+        let mut spawn = Writer::new();
+        spawn.varint(5);
+        spawn.uuid(0);
+        spawn.varint(entity_type("sulfur_cube"));
+        spawn.raw(&[0u8; 24]);
+        spawn.u8(0);
+        spawn.raw(&[0u8; 3]);
+        spawn.varint(0);
+        let mut produced = Vec::new();
+        e.add_entity(&items, &spawn.buf, &mut produced).unwrap();
+        let label = &produced[1].1;
+        assert!(!label.windows(3).any(|w| w == [3, ty::BOOL as u8, 1]), "name not forced visible");
     }
 
     #[test]

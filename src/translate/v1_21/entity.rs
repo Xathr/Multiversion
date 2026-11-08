@@ -259,6 +259,12 @@ impl Entities {
                 }
                 Kind::WaterBaby(_) if index > 16 => index -= 1,
                 Kind::Creaking if index == 16 || index == 17 => keep = false,
+                Kind::Creaking if index == 2 && t == ty::OPT_COMPONENT && value.buf == [0] => {
+                    // "No custom name" from the server would erase the stand-in's label: keep it.
+                    value = Writer::new();
+                    value.bool(true);
+                    nbt::write(&mut value, &Tag::String("Creaking".into()));
+                }
                 _ => {}
             }
             if keep {
