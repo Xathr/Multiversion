@@ -455,3 +455,56 @@ mod creative_slot_items {
         }
     }
 }
+
+#[cfg(test)]
+mod loaded_crossbow {
+    use super::*;
+    use crate::proto::buf::{Reader, Writer};
+
+    fn idx(names: &[&str], n: &str) -> i32 {
+        names.iter().position(|x| *x == n).unwrap() as i32
+    }
+
+    /// Pumpkin writes a loaded crossbow's projectile as an empty (air) template. Clients that
+    /// take item stacks there (1.21.11 and older) reject an empty one and disconnect, so they get
+    /// a valid crossbow loaded with an arrow instead.
+    #[test]
+    fn loaded_crossbow_reaches_older_clients() {
+        let (items, comps) = (&data_26_2::NEW_ITEM_NAMES, &data_26_2::NEW_COMPONENT_NAMES);
+        let mut w = Writer::new();
+        w.varint(0);
+        w.varint(5);
+        w.i16(36);
+        w.varint(1);
+        w.varint(idx(items, "crossbow"));
+        w.varint(1);
+        w.varint(0);
+        w.varint(idx(comps, "charged_projectiles"));
+        w.varint(1);
+        for _ in 0..4 {
+            w.varint(0); // id, count, added, removed: what Pumpkin sends
+        }
+        let packet = Packet::new(v26_2::ids::new::CONTAINER_SET_SLOT, w.into_inner());
+        for (protocol, old_items, old_comps) in [
+            (774, &data_1_21_11::OLD_ITEM_NAMES[..], &data_1_21_11::OLD_COMPONENT_NAMES[..]),
+            (767, &data_1_21::OLD_ITEM_NAMES[..], &data_1_21::OLD_COMPONENT_NAMES[..]),
+            (766, &data_1_20_5::OLD_ITEM_NAMES[..], &data_1_20_5::OLD_COMPONENT_NAMES[..]),
+        ] {
+            let mut chain = Chain::for_client(Version { protocol }).unwrap();
+            let out = chain.clientbound(State::Play, packet.clone()).unwrap();
+            let mut r = Reader::new(&out[0].payload);
+            r.varint().unwrap();
+            r.varint().unwrap();
+            r.i16().unwrap();
+            assert_eq!(r.varint().unwrap(), 1, "protocol {protocol}: count");
+            assert_eq!(r.varint().unwrap(), idx(old_items, "crossbow"), "protocol {protocol}");
+            let added = r.varint().unwrap();
+            r.varint().unwrap();
+            assert!(added >= 1, "protocol {protocol}");
+            assert_eq!(r.varint().unwrap(), idx(old_comps, "charged_projectiles"), "protocol {protocol}");
+            assert_eq!(r.varint().unwrap(), 1, "protocol {protocol}: one projectile");
+            assert_eq!(r.varint().unwrap(), 1, "protocol {protocol}: projectile count");
+            assert_eq!(r.varint().unwrap(), idx(old_items, "arrow"), "protocol {protocol}: an arrow, not air");
+        }
+    }
+}

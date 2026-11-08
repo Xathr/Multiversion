@@ -726,10 +726,40 @@ impl Items {
                 Ok(keep)
             }
             "charged_projectiles" | "bundle_contents" => {
-                let n = Self::copy_varint(r, w)?;
-                for _ in 0..n {
-                    self.template(r, w)?;
+                let n = r.varint()?;
+                if self.dir == Dir::ToServer {
+                    w.varint(n);
+                    for _ in 0..n {
+                        self.template(r, w)?;
+                    }
+                    return Ok(keep);
                 }
+                // These lists hold plain item stacks for 1.21.11 and older clients, which reject
+                // an empty (air) entry and drop the whole packet. Pumpkin writes every loaded
+                // crossbow projectile as air, so empty entries are left out, and a crossbow left
+                // with none shows one arrow to keep its loaded look. The server keeps its own copy.
+                let mut body = Writer::new();
+                let mut kept = 0;
+                for _ in 0..n.max(0) {
+                    let mut entry = Writer::new();
+                    self.template(r, &mut entry)?;
+                    let mut er = Reader::new(&entry.buf);
+                    er.varint()?;
+                    if er.varint()? != 0 {
+                        body.raw(&entry.buf);
+                        kept += 1;
+                    }
+                }
+                if kept == 0 && n > 0 && name == "charged_projectiles" {
+                    let arrow = d::OLD_ITEM_NAMES.iter().position(|i| *i == "arrow").unwrap_or(0) as i32;
+                    body.varint(1);
+                    body.varint(arrow);
+                    body.varint(0);
+                    body.varint(0);
+                    kept = 1;
+                }
+                w.varint(kept);
+                w.raw(&body.buf);
                 Ok(keep)
             }
             "container" => {
