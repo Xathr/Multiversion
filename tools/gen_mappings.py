@@ -172,7 +172,7 @@ for key, const in [("entities", "OLD_ENTITY_NAMES"), ("items", "NEW_ITEM_NAMES")
     src = N if const.startswith("NEW") else O
     if key in src:
         sections.append("pub static %s: [&str; %d] = [%s];" % (const, len(src[key]), ",".join(json.dumps(n) for n in src[key])))
-for key, const in [("recipe_serializers", "NEW_RECIPE_SERIALIZER_NAMES"), ("recipe_serializers", "OLD_RECIPE_SERIALIZER_NAMES"), ("menus", "NEW_MENU_NAMES"), ("menus", "OLD_MENU_NAMES"), ("enchantments", "NEW_ENCHANTMENT_NAMES"), ("enchantments", "OLD_ENCHANTMENT_NAMES")]:
+for key, const in [("recipe_serializers", "NEW_RECIPE_SERIALIZER_NAMES"), ("recipe_serializers", "OLD_RECIPE_SERIALIZER_NAMES"), ("menus", "NEW_MENU_NAMES"), ("menus", "OLD_MENU_NAMES"), ("enchantments", "NEW_ENCHANTMENT_NAMES"), ("enchantments", "OLD_ENCHANTMENT_NAMES"), ("paintings", "OLD_PAINTING_NAMES")]:
     src = N if const.startswith("NEW") else O
     if key in src:
         sections.append("pub static %s: [&str; %d] = [%s];" % (const, len(src[key]), ",".join(json.dumps(n) for n in src[key])))

@@ -15,6 +15,7 @@ pub mod data_1_21_5;
 pub mod data_1_21_4;
 pub mod data_1_21_2;
 pub mod data_1_21;
+pub mod data_1_20_5;
 pub mod v26_2;
 pub mod v26_1;
 pub mod v1_21;
@@ -25,6 +26,7 @@ pub mod v1_21_2;
 pub mod v1_21_9;
 pub mod v1_21_11;
 pub mod v1_21_6;
+pub mod v1_20_5;
 
 use crate::proto::version::{Version, BACKEND, KNOWN};
 
@@ -129,6 +131,7 @@ fn make_step(from: Version) -> Option<Box<dyn Translator>> {
         774 => Some(Box::new(v1_21_9::V1_21_11To1_21_9::new())),
         775 => Some(Box::new(v1_21_11::V26_1To1_21_11::new())),
         772 => Some(Box::new(v1_21_6::V1_21_7To1_21_6::new())),
+        767 => Some(Box::new(v1_20_5::V1_21To1_20_5::new())),
         _ => None,
     }
 }
@@ -285,6 +288,50 @@ mod chain_tests {
         let v = chunk_to_1_21_4(true);
         assert_eq!((v[0], v[1]), (25840, 0));
     }
+
+    /// A 1.21-only music disc in a 26.3 slot update reaches 1.20.5 as its stand-in, and the
+    /// client's copy of it comes back to the server as the real disc.
+    #[test]
+    fn new_disc_round_trips_through_1_20_5() {
+        let disc = data_26_2::NEW_ITEM_NAMES.iter().position(|n| *n == "music_disc_creator").unwrap() as i32;
+        let mut chain = Chain::for_client(Version { protocol: 766 }).unwrap();
+        let mut w = Writer::new();
+        w.varint(0).varint(1).i16(36);
+        w.varint(1).varint(disc).varint(0).varint(0);
+        let out = chain.clientbound(State::Play, Packet::new(v26_2::ids::new::CONTAINER_SET_SLOT, w.into_inner())).unwrap();
+        assert_eq!(out[0].id, 0x15, "1.20.5 container_set_slot");
+        let mut r = Reader::new(&out[0].payload);
+        r.u8().unwrap();
+        r.varint().unwrap();
+        r.i16().unwrap();
+        assert_eq!(r.varint().unwrap(), 1);
+        let far = data_1_20_5::OLD_ITEM_NAMES.iter().position(|n| *n == "music_disc_far").unwrap() as i32;
+        assert_eq!(r.varint().unwrap(), far);
+        // the client puts it in its creative inventory as is
+        let mut c = Writer::new();
+        c.i16(36);
+        c.raw(&out[0].payload[r.position() - crate::proto::buf::varint_len(far) - 1..]);
+        let back = chain.serverbound(State::Play, Packet::new(v1_20_5::ids::old::S_SET_CREATIVE_MODE_SLOT, c.into_inner())).unwrap();
+        let last = back.last().unwrap();
+        assert_eq!(last.id, v26_2::ids::new::S_SET_CREATIVE_MODE_SLOT);
+        let mut r = Reader::new(&last.payload);
+        assert_eq!(r.i16().unwrap(), 36);
+        assert_eq!(r.varint().unwrap(), 1);
+        assert_eq!(r.varint().unwrap(), disc);
+    }
+
+    /// 1.21's data-driven registries never reach a 1.20.5 client.
+    #[test]
+    fn new_registries_do_not_reach_1_20_5() {
+        let mut chain = Chain::for_client(Version { protocol: 766 }).unwrap();
+        for name in ["minecraft:enchantment", "minecraft:painting_variant", "minecraft:jukebox_song"] {
+            let mut w = Writer::new();
+            w.string(name);
+            w.varint(0);
+            let out = chain.clientbound(State::Configuration, Packet::new(v26_2::ids::new::CONFIG_REGISTRY_DATA, w.into_inner())).unwrap();
+            assert!(out.is_empty(), "{name} reached the client");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -310,8 +357,33 @@ mod block_state_coverage {
         }
         assert!(stone.is_empty(), "states shown as stone: {stone:?}");
     }
-}
 
+    /// Every 26.3 block state reaches the 1.20.5 client as a valid state, and none falls back
+    /// to stone unless it is stone itself.
+    #[test]
+    fn every_state_reaches_1_20_5() {
+        let mut chain = Chain::for_client(Version { protocol: 766 }).unwrap();
+        let mut stone = Vec::new();
+        for s in 2..35723 {
+            let mut w = Writer::new();
+            w.i64(0);
+            w.varint(s);
+            let out = chain.clientbound(State::Play, Packet::new(v26_2::ids::new::BLOCK_UPDATE, w.into_inner())).unwrap();
+            // some steps follow the update with block entity data; the update comes first
+            assert_eq!(out[0].id, 0x09, "1.20.5 block_update");
+            let mut r = Reader::new(&out[0].payload);
+            r.i64().unwrap();
+            let id = r.varint().unwrap();
+            assert!((0..data_1_20_5::OLD_BLOCK_STATE_COUNT as i32).contains(&id), "state {s} became {id}");
+            if id == 1 {
+                stone.push(s);
+            }
+        }
+        assert!(stone.is_empty(), "states shown as stone: {stone:?}");
+        assert!(super::is_supported(Version { protocol: 766 }));
+        assert_eq!(super::supported_range(), "1.20.5-26.3");
+    }
+}
 #[cfg(test)]
 mod creative_slot_items {
     use super::*;
@@ -356,7 +428,8 @@ mod creative_slot_items {
     /// server from every client version (1.21.9 clients and older used to be disconnected).
     #[test]
     fn creative_bundle_reaches_the_server_from_every_version() {
-        let cases: [(i32, i32, &[&str], &[&str]); 9] = [
+        let cases: [(i32, i32, &[&str], &[&str]); 10] = [
+            (766, 0x32, &data_1_20_5::OLD_ITEM_NAMES, &data_1_20_5::OLD_COMPONENT_NAMES),
             (767, 0x32, &data_1_21::OLD_ITEM_NAMES, &data_1_21::OLD_COMPONENT_NAMES),
             (768, 0x34, &data_1_21_2::OLD_ITEM_NAMES, &data_1_21_2::OLD_COMPONENT_NAMES),
             (769, 0x36, &data_1_21_4::OLD_ITEM_NAMES, &data_1_21_4::OLD_COMPONENT_NAMES),
