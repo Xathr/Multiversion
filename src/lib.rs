@@ -64,7 +64,7 @@ mod plugin {
             let config = crate::config::Config::load_or_create(&path).map_err(|e| format!("multiversion: {e}"))?;
             crate::color::set_enabled(config.console_colors);
             crate::config::set_active(config.clone());
-            // Pumpkin lets a plugin write only its own data folder, so the three pumpkin.toml settings
+            // Pumpkin lets a plugin write only its own data folder, so the pumpkin.toml settings
             // it needs are written out ready to paste, and checked for at runtime.
             let snippet = crate::config::pumpkin_snippet(&config);
             let _ = std::fs::write(format!("{folder}/pumpkin-settings.txt"), &snippet);
@@ -82,7 +82,7 @@ mod plugin {
             if config.backend.forwarding_secret.is_empty() {
                 crate::log::warn("backend.forwarding_secret is empty; Pumpkin will reject logins. Set it in config.toml and pumpkin.toml.");
             }
-            crate::log::info(&crate::color::dim("if players can't join, apply plugins/data/multiversion/pumpkin-settings.txt to pumpkin.toml (three settings) and restart"));
+            crate::log::info(&crate::color::dim("if players can't join, apply plugins/data/multiversion/pumpkin-settings.txt to pumpkin.toml and restart"));
             *self.config.lock().unwrap() = Some(config.clone());
             // Bind now; then run the proxy loop in short slices, one per server tick, so Pumpkin
             // can still call our other hooks (and unload us on shutdown) in between.

@@ -71,6 +71,8 @@ pub enum Action {
     ConnectBackend,
     /// Start a session check; the proxy registers the pollable.
     StartAuth { username: String, server_hash: String, ip: Option<String> },
+    /// Pumpkin's server-list reply, to reuse for pings in the next moment.
+    CacheStatus(String),
     /// Close the client (after flushing) with a reason for the log.
     Close(String),
     Log(String),
@@ -105,6 +107,9 @@ pub struct Shared<'a> {
     pub config: &'a Config,
     pub keys: &'a ServerKeys,
     pub backend_addr: SocketAddr,
+    /// Pumpkin's server-list reply from the last second, if any: answered from here instead of
+    /// opening a new connection to Pumpkin for every ping.
+    pub cached_status: Option<&'a str>,
 }
 
 impl Connection {
@@ -115,7 +120,7 @@ impl Connection {
             peer,
             phase: Phase::Handshake,
             client_version: BACKEND,
-            client_in: Inbound::default(),
+            client_in: Inbound::with_max_frame(crate::proto::frame::MAX_FRAME_BEFORE_LOGIN),
             client_out: Outbound::default(),
             backend_in: Inbound::default(),
             backend_out: Outbound::default(),
@@ -131,6 +136,11 @@ impl Connection {
             status_ping_payload: None,
             pending_status_request: false,
         }
+    }
+
+    /// Not yet in the game: handshake, server list ping or login.
+    pub fn is_logging_in(&self) -> bool {
+        !matches!(self.phase, Phase::Configuration | Phase::Play | Phase::Closed)
     }
 
     fn client_pkt(&mut self, pkt: &Packet, out: &mut Vec<Action>) {
@@ -207,6 +217,13 @@ impl Connection {
                     }
                     // Both sides enter configuration. Tell the backend, release held packets.
                     self.phase = Phase::Configuration;
+                    self.client_in.max_frame = crate::proto::frame::MAX_FRAME;
+                    // A native client with the same compression threshold as Pumpkin gets Pumpkin's
+                    // compressed frames unchanged. The threshold must be high enough that the small
+                    // packets used to track login/configuration state are never compressed.
+                    let native = self.chain.as_ref().is_none_or(Chain::is_passthrough);
+                    let threshold = self.backend_in.compression;
+                    self.backend_in.keep_compressed = native && threshold >= 64 && threshold == self.client_out.compression;
                     self.state = State::Configuration;
                     self.client_state = State::Configuration;
                     let ack = Packet::new(ids::LOGIN_S_ACKNOWLEDGED, Vec::new());
@@ -259,12 +276,16 @@ impl Connection {
         }
     }
 
-    fn handle_status(&mut self, id: i32, payload: &[u8], _shared: &Shared, out: &mut Vec<Action>) -> Result<(), String> {
+    fn handle_status(&mut self, id: i32, payload: &[u8], shared: &Shared, out: &mut Vec<Action>) -> Result<(), String> {
         match id {
             ids::STATUS_S_REQUEST => {
                 // Ask the backend for its status so MOTD/favicon/player count stay Pumpkin's.
                 self.pending_status_request = true;
-                if self.phase == Phase::Status {
+                if self.phase == Phase::Status
+                    && let Some(json) = shared.cached_status
+                {
+                    self.finish_status(Some(json), shared, out);
+                } else if self.phase == Phase::Status {
                     self.phase = Phase::StatusBackendHandshake;
                     out.push(Action::ConnectBackend);
                 }
@@ -487,8 +508,16 @@ impl Connection {
     pub fn on_backend_data(&mut self, data: &[u8], shared: &Shared, out: &mut Vec<Action>) {
         self.backend_in.feed(data);
         loop {
-            match self.backend_in.next_packet() {
-                Ok(Some(pkt)) => {
+            match self.backend_in.next_frame() {
+                Ok(Some(crate::proto::frame::Frame::Compressed(body))) => {
+                    // Native client, same compression threshold: forward Pumpkin's compressed
+                    // frame as it is (only encryption is added).
+                    let mut bytes = Vec::new();
+                    self.client_out.frame_compressed(&body, &mut bytes);
+                    self.client_out.seal(&mut bytes);
+                    out.push(Action::SendClient(bytes));
+                }
+                Ok(Some(crate::proto::frame::Frame::Packet(pkt))) => {
                     if let Err(e) = self.handle_backend_packet(pkt, shared, out) {
                         err_log(out, color::bad(&format!("backend packet error for {}: {e}", self.username)));
                         let m = &config::get().messages;
@@ -530,6 +559,7 @@ impl Connection {
                 if id == ids::STATUS_C_RESPONSE {
                     let mut r = Reader::new(&payload);
                     let json = r.string().map_err(|e| e.to_string())?.to_string();
+                    out.push(Action::CacheStatus(json.clone()));
                     self.finish_status(Some(&json), shared, out);
                     if let Some(b) = self.backend {
                         out.push(Action::Log(format!("__close_backend:{b}")));

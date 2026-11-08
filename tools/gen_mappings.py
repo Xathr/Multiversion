@@ -7,6 +7,9 @@ Input: per-version registry mapping files (id -> name lists and diff files):
 Usage: gen_mappings.py <mappings-repo> <new> <old> <out.rs>
 """
 import json, sys, re
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from table_runs import table as rust_table  # compact run-length tables (see src/translate/table.rs)
 
 repo, new, old, out = sys.argv[1:5]
 N = json.load(open(f"{repo}/mappings/mapping-{new}.json"))
@@ -120,8 +123,7 @@ def emit(name, key, fallback_default=0, blockstate=False):
         stats.append(f"// {key}: not present in both versions, table omitted"); return
     tbl, unmapped = table(key, fallback_default, blockstate)
     stats.append(f"// {key}: {len(N[key])} ids, {len(unmapped)} with no mapping (fallback {fallback_default}){': ' + ', '.join(unmapped[:8]) + ('...' if len(unmapped) > 8 else '') if unmapped else ''}")
-    rows = ",".join(str(x) for x in tbl)
-    sections.append(f"pub static {name}: [u32; {len(tbl)}] = [{rows}];")
+    sections.append(rust_table(name, tbl))
 
 # For block states the stone fallback (id 1) is less jarring than air.
 emit("BLOCK_STATES", "blockstates", fallback_default=1, blockstate=True)
@@ -149,15 +151,15 @@ sections.append("pub static REMOVED_ENVIRONMENT_ATTRIBUTES: [&str; %d] = [%s];" 
 # Data component types: new ones that the old client doesn't know map to u32::MAX (= drop).
 old_c = {n: i for i, n in enumerate(O["data_component_type"])}
 comp = [old_c.get(n, 0xFFFFFFFF) for n in N["data_component_type"]]
-sections.append(f"pub const COMPONENT_DROP: u32 = 0xFFFF_FFFF;\npub static COMPONENTS: [u32; {len(comp)}] = [{','.join(str(x) for x in comp)}];")
+sections.append("pub const COMPONENT_DROP: u32 = 0xFFFF_FFFF;\n" + rust_table("COMPONENTS", comp))
 # Reverse direction (old client -> new server) for serverbound item stacks.
 new_c = {n: i for i, n in enumerate(N["data_component_type"])}
 rcomp = [new_c.get(n, 0xFFFFFFFF) for n in O["data_component_type"]]
-sections.append(f"pub static COMPONENTS_REVERSE: [u32; {len(rcomp)}] = [{','.join(str(x) for x in rcomp)}];")
+sections.append(rust_table("COMPONENTS_REVERSE", rcomp))
 def emit_reverse(name, key, fallback=0):
     new_index = {n: i for i, n in enumerate(N[key])}
     rows = [new_index.get(n, fallback) for n in O[key]]
-    sections.append(f"pub static {name}_REVERSE: [u32; {len(rows)}] = [{','.join(str(x) for x in rows)}];")
+    sections.append(rust_table(f"{name}_REVERSE", rows))
 for name, key in [("ITEMS", "items"), ("BLOCKS", "blocks"), ("ENTITIES", "entities"), ("PARTICLES", "particles"), ("SOUNDS", "sounds"), ("ATTRIBUTES", "attributes"), ("ARGUMENT_TYPES", "argumenttypes")]:
     emit_reverse(name, key)
 sections.append("pub static OLD_COMPONENT_NAMES: [&str; %d] = [%s];" % (len(O["data_component_type"]), ",".join(json.dumps(n) for n in O["data_component_type"])))
@@ -177,7 +179,7 @@ for key, const in [("recipe_serializers", "NEW_RECIPE_SERIALIZER_NAMES"), ("reci
 sections.append("pub const WHITE_CARPET_STATE_OLD: u32 = %d;" % O["blockstates"].index("white_carpet"))
 new_bs = {n: i for i, n in enumerate(N["blockstates"])}
 rbs = [new_bs.get(n, 0) for n in O["blockstates"]]
-sections.append(f"pub static BLOCK_STATES_REVERSE: [u32; {len(rbs)}] = [{','.join(str(x) for x in rbs)}];")
+sections.append(rust_table("BLOCK_STATES_REVERSE", rbs))
 sections.append(f"pub const NEW_BLOCK_STATE_COUNT: u32 = {len(N['blockstates'])};\npub const OLD_BLOCK_STATE_COUNT: u32 = {len(O['blockstates'])};\npub const OLD_BIOME_COUNT_HINT: u32 = 64;")
 # Component names for both versions (useful for logging / NBT rewriting).
 sections.append("pub static NEW_COMPONENT_NAMES: [&str; %d] = [%s];" % (len(N["data_component_type"]), ",".join(json.dumps(n) for n in N["data_component_type"])))

@@ -60,14 +60,18 @@ Requirements: a Pumpkin 26.3 server (built from commit `d1190dc`, plugin API v0.
 
 1. Copy `Multiversion.wasm` (from the [latest release](https://github.com/jayclrk358/Multiversion/releases/latest), or built with `build.sh`) into your server's `plugins/` folder.
 2. Start the server once. The plugin writes `plugins/data/multiversion/config.toml` with a
-   fresh forwarding secret, and `pumpkin-settings.txt` next to it with the three `pumpkin.toml`
+   fresh forwarding secret, and `pumpkin-settings.txt` next to it with the `pumpkin.toml`
    settings it needs (Pumpkin only lets plugins write their own data folder, so this edit is the
    one thing it cannot do itself):
    - `networking.java.address = "127.0.0.1:25566"`: Pumpkin moves to a localhost port and the
      plugin takes over 25565;
    - `networking.proxy.enabled = true` and `networking.proxy.velocity` enabled with the secret:
      Pumpkin accepts the signed identity the plugin forwards;
-   - `plugins.enabled = true` with the plugin's permissions pre-approved.
+   - `plugins.enabled = true` with the plugin's permissions pre-approved;
+   - `networking.java.compression.enabled = false`: Pumpkin's local link to the plugin isn't
+     compressed, which saves CPU. Players' connections are still compressed by the plugin. To keep
+     Pumpkin's compression, set `pumpkin_compression = true` under `[backend]` in the plugin's
+     `config.toml` and skip this one.
    Paste them into `pumpkin.toml` and restart. If you skip this, the plugin tells you on the console
    exactly which setting is missing (port still held by Pumpkin, or forwarding not enabled).
 3. Players keep connecting to port 25565. Keep 25566 closed in the firewall.
@@ -104,6 +108,8 @@ address = "0.0.0.0:25565"          # public port players use
 [backend]
 address = "127.0.0.1:25566"        # Pumpkin's networking.java.address
 forwarding_secret = "..."          # = networking.proxy.velocity.secret
+pumpkin_compression = false        # true keeps Pumpkin compressing its local link to the plugin
+                                   # (costs CPU; players' connections are compressed either way)
 
 [auth]
 online_mode = true                 # verify players with Mojang
@@ -122,9 +128,10 @@ deny = []                          # refused even if allowed above
 kick_unsupported_message = "This server supports Minecraft {versions}. You are on {client}."
 
 [limits]
-compression_threshold = 256
+compression_threshold = 256        # packets to players above this size are compressed; -1 = off
 max_connections = 200
 login_timeout_secs = 30
+max_logins_per_ip = 5              # connections one address may have still logging in; 0 = no limit
 
 [messages]                         # what players see when they're disconnected
 server_starting = "The server is starting up. Please try again in a moment."

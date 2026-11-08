@@ -37,6 +37,15 @@ struct ProxyHandler {
     backend_of: HashMap<Token, Token>,
     /// external pollable id -> (client token, pending auth)
     auths: HashMap<u32, (Token, PendingAuth)>,
+    /// Pumpkin's last server-list reply and when it arrived (ms).
+    status_cache: Option<(u64, String)>,
+}
+
+/// How long a server-list reply from Pumpkin is reused.
+const STATUS_CACHE_MS: u64 = 1000;
+
+fn fresh_status(cache: &Option<(u64, String)>) -> Option<&str> {
+    cache.as_ref().filter(|(at, _)| now_millis().saturating_sub(*at) < STATUS_CACHE_MS).map(|(_, json)| json.as_str())
 }
 
 impl ProxyHandler {
@@ -59,7 +68,7 @@ impl ProxyHandler {
                     Err(e) => {
                         let mut more = Vec::new();
                         if let Some(c) = self.conns.get_mut(&client) {
-                            let shared = Shared { config: &self.config, keys: &self.keys, backend_addr: self.backend_addr };
+                            let shared = Shared { config: &self.config, keys: &self.keys, backend_addr: self.backend_addr, cached_status: fresh_status(&self.status_cache) };
                             c.on_backend_connect_failed(&e, &shared, &mut more);
                         }
                         self.apply(reactor, client, more);
@@ -74,7 +83,7 @@ impl ProxyHandler {
                         Err(e) => {
                             let mut more = Vec::new();
                             if let Some(c) = self.conns.get_mut(&client) {
-                                let shared = Shared { config: &self.config, keys: &self.keys, backend_addr: self.backend_addr };
+                                let shared = Shared { config: &self.config, keys: &self.keys, backend_addr: self.backend_addr, cached_status: fresh_status(&self.status_cache) };
                                 c.on_auth(auth::AuthOutcome::Error(e), &shared, &mut more);
                             }
                             self.apply(reactor, client, more);
@@ -83,6 +92,9 @@ impl ProxyHandler {
                 }
                 Action::Close(reason) => {
                     self.close(reactor, client, &reason, false);
+                }
+                Action::CacheStatus(json) => {
+                    self.status_cache = Some((now_millis(), json));
                 }
                 Action::Log(msg) => {
                     if let Some(b) = msg.strip_prefix("__close_backend:") {
@@ -143,6 +155,14 @@ impl Handler for ProxyHandler {
                     reactor.close_now(token);
                     return;
                 }
+                let logging_in = self.conns.values().filter(|c| c.peer.ip() == peer.ip() && c.is_logging_in()).count();
+                if !self.config.limits.allows_login_from(logging_in) {
+                    if self.config.logging.debug {
+                        log::info(&format!("{} {peer} refused: limits.max_logins_per_ip ({}) reached", crate::color::dim("debug:"), self.config.limits.max_logins_per_ip));
+                    }
+                    reactor.close_now(token);
+                    return;
+                }
                 if self.config.logging.debug {
                     log::info(&format!("{} {peer} connected", crate::color::dim("debug:")));
                 }
@@ -152,12 +172,12 @@ impl Handler for ProxyHandler {
                 let mut actions = Vec::new();
                 if let Some(client) = self.backend_of.get(&token).copied() {
                     if let Some(c) = self.conns.get_mut(&client) {
-                        let shared = Shared { config: &self.config, keys: &self.keys, backend_addr: self.backend_addr };
+                        let shared = Shared { config: &self.config, keys: &self.keys, backend_addr: self.backend_addr, cached_status: fresh_status(&self.status_cache) };
                         c.on_backend_data(&data, &shared, &mut actions);
                     }
                     self.apply(reactor, client, actions);
                 } else if let Some(c) = self.conns.get_mut(&token) {
-                    let shared = Shared { config: &self.config, keys: &self.keys, backend_addr: self.backend_addr };
+                    let shared = Shared { config: &self.config, keys: &self.keys, backend_addr: self.backend_addr, cached_status: fresh_status(&self.status_cache) };
                     c.on_client_data(&data, &shared, &mut actions);
                     self.apply(reactor, token, actions);
                 }
@@ -166,7 +186,7 @@ impl Handler for ProxyHandler {
                 let Some(client) = self.backend_of.get(&token).copied() else { return };
                 let mut actions = Vec::new();
                 if let Some(c) = self.conns.get_mut(&client) {
-                    let shared = Shared { config: &self.config, keys: &self.keys, backend_addr: self.backend_addr };
+                    let shared = Shared { config: &self.config, keys: &self.keys, backend_addr: self.backend_addr, cached_status: fresh_status(&self.status_cache) };
                     match result {
                         Ok(()) => c.on_backend_connected(&shared, &mut actions),
                         Err(e) => c.on_backend_connect_failed(&e, &shared, &mut actions),
@@ -183,7 +203,7 @@ impl Handler for ProxyHandler {
                     let mut actions = Vec::new();
                     if let Some(c) = self.conns.get_mut(&client) {
                         c.backend = None;
-                        let shared = Shared { config: &self.config, keys: &self.keys, backend_addr: self.backend_addr };
+                        let shared = Shared { config: &self.config, keys: &self.keys, backend_addr: self.backend_addr, cached_status: fresh_status(&self.status_cache) };
                         c.on_backend_closed(&reason, &shared, &mut actions);
                     }
                     self.apply(reactor, client, actions);
@@ -193,10 +213,18 @@ impl Handler for ProxyHandler {
             }
             Event::External { id } => {
                 if let Some((client, pending)) = self.auths.remove(&id) {
-                    let outcome = auth::finish(pending);
+                    let outcome = match auth::advance(pending) {
+                        auth::Progress::Done(outcome) => outcome,
+                        auth::Progress::Pending(pending) => {
+                            // Headers in, body still arriving: wait for more without blocking.
+                            let id = reactor.watch(pending.pollable());
+                            self.auths.insert(id, (client, pending));
+                            return;
+                        }
+                    };
                     let mut actions = Vec::new();
                     if let Some(c) = self.conns.get_mut(&client) {
-                        let shared = Shared { config: &self.config, keys: &self.keys, backend_addr: self.backend_addr };
+                        let shared = Shared { config: &self.config, keys: &self.keys, backend_addr: self.backend_addr, cached_status: fresh_status(&self.status_cache) };
                         c.on_auth(outcome, &shared, &mut actions);
                     }
                     self.apply(reactor, client, actions);
@@ -271,6 +299,7 @@ pub fn start(config: Config) -> Result<(), String> {
         conns: HashMap::new(),
         backend_of: HashMap::new(),
         auths: HashMap::new(),
+        status_cache: None,
     };
     *PROXY.lock().unwrap_or_else(|p| p.into_inner()) = Some(Proxy { reactor, handler });
     Ok(())

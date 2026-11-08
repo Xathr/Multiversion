@@ -3,7 +3,8 @@
 
 use crate::proto::buf::uuid_from_str;
 use wasip2::http::outgoing_handler;
-use wasip2::http::types::{Fields, FutureIncomingResponse, Method, OutgoingRequest, Scheme};
+use wasip2::http::types::{Fields, FutureIncomingResponse, IncomingBody, Method, OutgoingRequest, Scheme};
+use wasip2::io::streams::{InputStream, StreamError};
 use wasip2::io::poll::Pollable;
 
 #[derive(Debug, Clone)]
@@ -20,13 +21,31 @@ pub struct Profile {
     pub properties: Vec<Property>,
 }
 
+/// A session check in progress: waiting for the response headers, then reading the body. Each
+/// step only takes what is already available, so a slow session server never stalls the proxy.
 pub struct PendingAuth {
-    future: FutureIncomingResponse,
+    stage: Stage,
+}
+
+enum Stage {
+    Waiting(FutureIncomingResponse),
+    // `stream` is declared first so it is dropped before the body it belongs to.
+    Reading { stream: InputStream, _body: IncomingBody, bytes: Vec<u8> },
+}
+
+/// Where a session check stands after `advance`.
+pub enum Progress {
+    Done(AuthOutcome),
+    /// Waiting for more; watch `pollable()` again and call `advance` when it fires.
+    Pending(PendingAuth),
 }
 
 impl PendingAuth {
     pub fn pollable(&self) -> Pollable {
-        self.future.subscribe()
+        match &self.stage {
+            Stage::Waiting(future) => future.subscribe(),
+            Stage::Reading { stream, .. } => stream.subscribe(),
+        }
     }
 }
 
@@ -65,7 +84,7 @@ pub fn start(session_server: &str, username: &str, server_hash: &str, ip: Option
     req.set_authority(Some(authority)).map_err(|()| "authority")?;
     req.set_path_with_query(Some(&path)).map_err(|()| "path")?;
     let future = outgoing_handler::handle(req, None).map_err(|e| format!("http: {e:?}"))?;
-    Ok(PendingAuth { future })
+    Ok(PendingAuth { stage: Stage::Waiting(future) })
 }
 
 /// Result of a finished session check.
@@ -78,44 +97,52 @@ pub enum AuthOutcome {
     Error(String),
 }
 
-/// Completes the request once the reactor reports the pollable ready.
-pub fn finish(pending: PendingAuth) -> AuthOutcome {
-    let response = match pending.future.get() {
-        Some(Ok(Ok(r))) => r,
-        Some(Ok(Err(e))) => return AuthOutcome::Error(format!("http error: {e:?}")),
-        Some(Err(())) => return AuthOutcome::Error("response already taken".into()),
-        None => return AuthOutcome::Error("response not ready".into()),
+/// Takes the session check as far as it can without waiting, once its pollable has fired.
+pub fn advance(pending: PendingAuth) -> Progress {
+    let (stream, body, mut bytes) = match pending.stage {
+        Stage::Waiting(future) => {
+            let response = match future.get() {
+                Some(Ok(Ok(r))) => r,
+                Some(Ok(Err(e))) => return Progress::Done(AuthOutcome::Error(format!("http error: {e:?}"))),
+                Some(Err(())) => return Progress::Done(AuthOutcome::Error("response already taken".into())),
+                None => return Progress::Pending(PendingAuth { stage: Stage::Waiting(future) }),
+            };
+            let status = response.status();
+            if status == 204 || status == 404 {
+                return Progress::Done(AuthOutcome::InvalidSession);
+            }
+            if status != 200 {
+                return Progress::Done(AuthOutcome::Error(format!("session server returned {status}")));
+            }
+            let Ok(body) = response.consume() else {
+                return Progress::Done(AuthOutcome::Error("no body".into()));
+            };
+            let Ok(stream) = body.stream() else {
+                return Progress::Done(AuthOutcome::Error("no body stream".into()));
+            };
+            (stream, body, Vec::new())
+        }
+        Stage::Reading { stream, _body, bytes } => (stream, _body, bytes),
     };
-    let status = response.status();
-    if status == 204 || status == 404 {
-        return AuthOutcome::InvalidSession;
-    }
-    if status != 200 {
-        return AuthOutcome::Error(format!("session server returned {status}"));
-    }
-    let body = match response.consume() {
-        Ok(b) => b,
-        Err(()) => return AuthOutcome::Error("no body".into()),
-    };
-    let stream = match body.stream() {
-        Ok(s) => s,
-        Err(()) => return AuthOutcome::Error("no body stream".into()),
-    };
-    let mut bytes = Vec::new();
     loop {
-        match stream.blocking_read(1 << 16) {
+        match stream.read(1 << 16) {
+            // Nothing more yet: come back when the stream has data.
+            Ok(chunk) if chunk.is_empty() => {
+                return Progress::Pending(PendingAuth { stage: Stage::Reading { stream, _body: body, bytes } });
+            }
             Ok(chunk) => {
                 bytes.extend_from_slice(&chunk);
                 if bytes.len() > 1 << 20 {
-                    return AuthOutcome::Error("response too large".into());
+                    return Progress::Done(AuthOutcome::Error("response too large".into()));
                 }
             }
-            Err(wasip2::io::streams::StreamError::Closed) => break,
-            Err(e) => return AuthOutcome::Error(format!("read: {e:?}")),
+            Err(StreamError::Closed) => break,
+            Err(e) => return Progress::Done(AuthOutcome::Error(format!("read: {e:?}"))),
         }
     }
     drop(stream);
-    parse_profile(&bytes)
+    drop(body);
+    Progress::Done(parse_profile(&bytes))
 }
 
 pub fn parse_profile(json: &[u8]) -> AuthOutcome {

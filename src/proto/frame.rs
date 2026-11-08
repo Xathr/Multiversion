@@ -11,27 +11,57 @@ type Aes128Cfb8Enc = cfb8::Encryptor<aes::Aes128>;
 type Aes128Cfb8Dec = cfb8::Decryptor<aes::Aes128>;
 
 pub const MAX_PACKET: usize = 1 << 21; // vanilla: 2 MiB (uncompressed) / 8 MiB compressed cap
+/// The largest frame accepted once a player is logged in (and from Pumpkin).
+pub const MAX_FRAME: usize = MAX_PACKET * 4;
+/// The largest frame a client may send before it has logged in. Handshake, status and login
+/// packets are a few hundred bytes; without this, anyone could make the plugin hold 8 MiB per
+/// connection before proving anything.
+pub const MAX_FRAME_BEFORE_LOGIN: usize = 1 << 16;
 
 /// One direction of a connection's byte pipeline (decrypt → split frames → decompress).
 pub struct Inbound {
     buf: Vec<u8>,
+    /// Bytes of `buf` already handed out as packets. They are dropped in one go now and then
+    /// rather than after every packet, which would shift the whole buffer each time.
+    read: usize,
     cipher: Option<Cfb8Stream>,
     pub compression: i32, // -1 = off
     inflater: Decompress,
+    /// Frames (and declared decompressed sizes) above this are refused.
+    pub max_frame: usize,
+    /// `next_frame` hands compressed frames back as they are instead of decompressing them, for
+    /// relaying to a client that uses the same compression threshold.
+    pub keep_compressed: bool,
+}
+
+/// One frame from `Inbound::next_frame`.
+pub enum Frame {
+    /// A decoded packet (id + payload).
+    Packet(Vec<u8>),
+    /// A compressed frame's body (uncompressed length + zlib data), left as it arrived.
+    Compressed(Vec<u8>),
 }
 
 impl Default for Inbound {
     fn default() -> Self {
-        Self { buf: Vec::new(), cipher: None, compression: -1, inflater: Decompress::new(true) }
+        Self { buf: Vec::new(), read: 0, cipher: None, compression: -1, inflater: Decompress::new(true), max_frame: MAX_FRAME, keep_compressed: false }
     }
 }
 
 impl Inbound {
+    /// An inbound pipeline that refuses frames above `max_frame` bytes.
+    pub fn with_max_frame(max_frame: usize) -> Self {
+        Self { max_frame, ..Self::default() }
+    }
     pub fn enable_encryption(&mut self, key: [u8; 16]) {
         self.cipher = Some(Cfb8Stream::new(key));
     }
     /// Feeds raw bytes from the socket (decrypting as they arrive).
     pub fn feed(&mut self, data: &[u8]) {
+        if self.read > 0 && (self.read == self.buf.len() || self.read >= 1 << 16) {
+            self.buf.drain(..self.read);
+            self.read = 0;
+        }
         let start = self.buf.len();
         self.buf.extend_from_slice(data);
         if let Some(c) = self.cipher.as_mut() {
@@ -39,35 +69,64 @@ impl Inbound {
         }
     }
     pub fn buffered(&self) -> usize {
-        self.buf.len()
+        self.buf.len() - self.read
     }
+    /// Pops the next frame: a decoded packet, or with `keep_compressed`, a compressed frame as is.
+    pub fn next_frame(&mut self) -> Result<Option<Frame>, String> {
+        let Some(frame) = self.take_frame()? else { return Ok(None) };
+        if self.keep_compressed && self.compression >= 0 {
+            let mut r = Reader::new(&frame);
+            let data_len = r.varint().map_err(|e| e.to_string())?;
+            if data_len != 0 {
+                if data_len < 0 || data_len as usize > self.max_frame {
+                    return Err(format!("invalid uncompressed length {data_len}"));
+                }
+                return Ok(Some(Frame::Compressed(frame)));
+            }
+        }
+        self.decode(frame).map(|p| Some(Frame::Packet(p)))
+    }
+
     /// Pops the next complete, decompressed packet (id + payload) if available.
     pub fn next_packet(&mut self) -> Result<Option<Vec<u8>>, String> {
+        let Some(frame) = self.take_frame()? else { return Ok(None) };
+        self.decode(frame).map(Some)
+    }
+
+    /// The next complete frame's bytes (after the length prefix), if it has fully arrived.
+    fn take_frame(&mut self) -> Result<Option<Vec<u8>>, String> {
         let (len, hdr) = {
-            let mut r = Reader::new(&self.buf);
+            let pending = &self.buf[self.read..];
+            let mut r = Reader::new(pending);
             match r.varint() {
                 Ok(len) => (len, r.position()),
-                Err(_) if self.buf.len() < 5 => return Ok(None),
+                Err(_) if pending.len() < 5 => return Ok(None),
                 Err(e) => return Err(format!("bad frame length: {e}")),
             }
         };
-        if len <= 0 || len as usize > MAX_PACKET * 4 {
+        if len <= 0 || len as usize > self.max_frame {
             return Err(format!("invalid frame length {len}"));
         }
         let len = len as usize;
-        if self.buf.len() < hdr + len {
+        if self.buf.len() - self.read < hdr + len {
             return Ok(None);
         }
-        let frame: Vec<u8> = self.buf.drain(..hdr + len).skip(hdr).collect();
+        let frame: Vec<u8> = self.buf[self.read + hdr..self.read + hdr + len].to_vec();
+        self.read += hdr + len;
+        Ok(Some(frame))
+    }
+
+    /// Decompresses a frame (when compression is on) into id + payload.
+    fn decode(&mut self, frame: Vec<u8>) -> Result<Vec<u8>, String> {
         if self.compression < 0 {
-            return Ok(Some(frame));
+            return Ok(frame);
         }
         let mut r = Reader::new(&frame);
         let data_len = r.varint().map_err(|e| e.to_string())?;
         if data_len == 0 {
-            return Ok(Some(r.remaining().to_vec()));
+            return Ok(r.remaining().to_vec());
         }
-        if data_len < 0 || data_len as usize > MAX_PACKET * 4 {
+        if data_len < 0 || data_len as usize > self.max_frame {
             return Err(format!("invalid uncompressed length {data_len}"));
         }
         let mut out = Vec::with_capacity(data_len as usize + 16);
@@ -97,7 +156,7 @@ impl Inbound {
         if out.len() != data_len as usize {
             return Err(format!("decompressed {} bytes, expected {data_len}", out.len()));
         }
-        Ok(Some(out))
+        Ok(out)
     }
 }
 
@@ -182,6 +241,13 @@ impl Outbound {
             c.encrypt(out);
         }
     }
+    /// Frames an already-compressed frame body (from `Frame::Compressed`) into `out`.
+    pub fn frame_compressed(&mut self, body: &[u8], out: &mut Vec<u8>) {
+        let mut w = Writer::with_capacity(body.len() + 5);
+        w.varint(body.len() as i32);
+        w.raw(body);
+        out.extend_from_slice(&w.buf);
+    }
     /// Frames one packet (id+payload) into `out`.
     pub fn frame(&mut self, packet: &[u8], out: &mut Vec<u8>) {
         if self.compression < 0 {
@@ -212,6 +278,71 @@ impl Outbound {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn compressed_frames_pass_through_unchanged() {
+        let mut from_pumpkin = Outbound { compression: 64, ..Default::default() };
+        let big: Vec<u8> = (0..5000u32).map(|i| (i % 7) as u8).collect();
+        let small = vec![3u8, 1, 2];
+        let mut wire = Vec::new();
+        from_pumpkin.frame(&big, &mut wire);
+        from_pumpkin.frame(&small, &mut wire);
+
+        let mut ib = Inbound { compression: 64, keep_compressed: true, ..Default::default() };
+        ib.feed(&wire);
+        let mut to_client = Outbound { compression: 64, ..Default::default() };
+        let mut relayed = Vec::new();
+        match ib.next_frame().unwrap() {
+            Some(Frame::Compressed(body)) => to_client.frame_compressed(&body, &mut relayed),
+            _ => panic!("the large packet should stay compressed"),
+        }
+        match ib.next_frame().unwrap() {
+            Some(Frame::Packet(p)) => {
+                assert_eq!(p, small, "small packets are decoded so their ids can be read");
+                to_client.frame(&p, &mut relayed);
+            }
+            _ => panic!("the small packet should be decoded"),
+        }
+        assert_eq!(relayed, wire, "the client gets exactly what Pumpkin sent");
+
+        let mut client = Inbound { compression: 64, ..Default::default() };
+        client.feed(&relayed);
+        assert_eq!(client.next_packet().unwrap(), Some(big));
+        assert_eq!(client.next_packet().unwrap(), Some(small));
+    }
+    #[test]
+    fn frames_above_the_limit_are_refused() {
+        let mut ib = Inbound { max_frame: MAX_FRAME_BEFORE_LOGIN, ..Default::default() };
+        let mut w = Writer::new();
+        w.varint(MAX_FRAME_BEFORE_LOGIN as i32 + 1);
+        ib.feed(&w.into_inner());
+        assert!(ib.next_packet().is_err(), "a frame over the pre-login limit is refused from its length alone");
+        let mut ib = Inbound { max_frame: MAX_FRAME_BEFORE_LOGIN, ..Default::default() };
+        let mut w = Writer::new();
+        w.varint(3);
+        w.raw(&[0, 1, 2]);
+        ib.feed(&w.into_inner());
+        assert_eq!(ib.next_packet().unwrap(), Some(vec![0, 1, 2]));
+    }
+    #[test]
+    fn many_small_packets_in_one_burst() {
+        let mut ob = Outbound::default();
+        let mut bytes = Vec::new();
+        for i in 0..20_000u32 {
+            ob.frame(&i.to_be_bytes(), &mut bytes);
+        }
+        let mut ib = Inbound::default();
+        // Arrives in uneven pieces, as from a socket.
+        for chunk in bytes.chunks(7_777) {
+            ib.feed(chunk);
+        }
+        for i in 0..20_000u32 {
+            assert_eq!(ib.next_packet().unwrap(), Some(i.to_be_bytes().to_vec()));
+        }
+        assert_eq!(ib.next_packet().unwrap(), None);
+        assert_eq!(ib.buffered(), 0);
+        ib.feed(&[]);
+        assert!(ib.buf.is_empty(), "consumed bytes are dropped on the next feed");
+    }
     #[test]
     fn frame_roundtrip_plain_and_compressed() {
         for threshold in [-1, 0, 256] {

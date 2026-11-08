@@ -35,6 +35,10 @@ pub struct Backend {
     pub address: String,
     /// Shared secret: must equal `networking.proxy.velocity.secret` in pumpkin.toml.
     pub forwarding_secret: String,
+    /// Whether Pumpkin compresses what it sends to this plugin. Off by default: the link is
+    /// localhost, and the plugin compresses again for each player anyway, so Pumpkin's compression
+    /// only costs CPU. Players' connections are compressed either way ([limits].compression_threshold).
+    pub pumpkin_compression: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +78,10 @@ pub struct Limits {
     pub max_connections: usize,
     /// Seconds a connection may sit in handshake/login before it is dropped.
     pub login_timeout_secs: u64,
+    /// Connections one IP address may have that are still logging in (players already in the game
+    /// don't count, so several people behind one router can all play). Stops one address from
+    /// filling max_connections. 0 = no limit.
+    pub max_logins_per_ip: usize,
 }
 
 impl Default for Config {
@@ -98,7 +106,7 @@ impl Default for Listen {
 }
 impl Default for Backend {
     fn default() -> Self {
-        Self { address: "127.0.0.1:25566".into(), forwarding_secret: String::new() }
+        Self { address: "127.0.0.1:25566".into(), forwarding_secret: String::new(), pumpkin_compression: false }
     }
 }
 impl Default for Auth {
@@ -126,7 +134,7 @@ impl Default for Versions {
 }
 impl Default for Limits {
     fn default() -> Self {
-        Self { compression_threshold: 256, max_connections: 200, login_timeout_secs: 30 }
+        Self { compression_threshold: 256, max_connections: 200, login_timeout_secs: 30, max_logins_per_ip: 5 }
     }
 }
 
@@ -206,6 +214,10 @@ pub const FILE_HEADER: &str = "# multiversion: lets other Minecraft versions joi
 #   [networking.java]            address = \"127.0.0.1:25566\"   online_mode = false\n\
 #   [networking.proxy]           enabled = true\n\
 #   [networking.proxy.velocity]  enabled = true   secret = \"<same as forwarding_secret below>\"\n\
+#   [networking.java.compression] enabled = false   (skip this if [backend].pumpkin_compression = true)\n\
+#\n\
+# [backend].pumpkin_compression: leave false to save CPU. Pumpkin's link to this plugin is local, and\n\
+# players' connections are still compressed by the plugin ([limits].compression_threshold).\n\
 #\n\
 # [versions] chooses who may join. Entries are a version (\"1.21.4\"), a family (\"1.21.*\") or a\n\
 # range (\"1.21.5-26.3\"). allow = [\"*\"] (the default) or [] means every version the plugin can\n\
@@ -233,7 +245,7 @@ impl Config {
 /// on: with proxy forwarding enabled Pumpkin trusts the signed profile instead of asking Mojang.
 pub fn pumpkin_snippet(cfg: &Config) -> String {
     format!(
-        "# multiversion needs these three things in pumpkin.toml (restart the server afterwards):\n\
+        "# multiversion needs these settings in pumpkin.toml (restart the server afterwards):\n\
          #\n\
          # 1. Pumpkin moves to a localhost port; the plugin takes over {public}.\n\
          [networking.java]\n\
@@ -254,12 +266,30 @@ pub fn pumpkin_snippet(cfg: &Config) -> String {
          [plugins.overrides.multiversion]\n\
          allowed_permissions = [\"network.tcp\", \"http.outbound\", \"fs.read.data\", \"fs.write.data\"]\n\
          \n\
+         {compression}\
          # Keep {backend_port} closed in your firewall; only {public} needs to be open.\n",
         public = cfg.listen.address,
         backend = cfg.backend.address,
         backend_port = cfg.backend.address.rsplit(':').next().unwrap_or("25566"),
         secret = cfg.backend.forwarding_secret.replace('\\', "\\\\").replace('"', "\\\""),
+        compression = if cfg.backend.pumpkin_compression {
+            ""
+        } else {
+            "# 4. Pumpkin doesn't compress its local link to the plugin (players' connections are still\n\
+             #    compressed by the plugin). To keep Pumpkin's compression instead, set\n\
+             #    [backend] pumpkin_compression = true in plugins/data/multiversion/config.toml and skip this.\n\
+             [networking.java.compression]\n\
+             enabled = false\n\
+             \n"
+        },
     )
+}
+
+impl Limits {
+    /// Whether an address that already has `logging_in` connections still logging in may open another.
+    pub fn allows_login_from(&self, logging_in: usize) -> bool {
+        self.max_logins_per_ip == 0 || logging_in < self.max_logins_per_ip
+    }
 }
 
 impl Versions {
@@ -348,5 +378,31 @@ mod version_selector_tests {
         assert!(Versions::default().permits(v("1.21.2")));
         assert!(Versions::default().permits(v("26.3")));
         assert!(Versions { allow: Vec::new(), ..Default::default() }.permits(v("1.21")));
+    }
+}
+
+#[cfg(test)]
+mod snippet_tests {
+    use super::*;
+
+    #[test]
+    fn logins_per_ip() {
+        let l = Limits::default();
+        assert!(l.allows_login_from(4));
+        assert!(!l.allows_login_from(5));
+        let off = Limits { max_logins_per_ip: 0, ..Limits::default() };
+        assert!(off.allows_login_from(1000));
+    }
+
+    #[test]
+    fn snippet_follows_pumpkin_compression() {
+        let mut cfg = Config::default();
+        assert!(pumpkin_snippet(&cfg).contains("[networking.java.compression]\nenabled = false"));
+        cfg.backend.pumpkin_compression = true;
+        assert!(!pumpkin_snippet(&cfg).contains("[networking.java.compression]"));
+        let parsed: Config = toml::from_str("[backend]\npumpkin_compression = true\n").unwrap();
+        assert!(parsed.backend.pumpkin_compression);
+        let old: Config = toml::from_str("[backend]\naddress = \"127.0.0.1:1\"\n").unwrap();
+        assert!(!old.backend.pumpkin_compression, "configs without the setting turn Pumpkin's compression off");
     }
 }
