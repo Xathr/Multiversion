@@ -92,6 +92,11 @@ plugin still logs them like Java players, with their Bedrock version and device:
 
 ## Configuration (`plugins/data/multiversion/config.toml`)
 
+Console messages are coloured (player names, versions, joins in green, disconnects in yellow, errors
+in red). Set `console_colors = false` at the top of the config for plain text. The web panel's
+console always shows plain text.
+
+
 ```toml
 [listen]
 address = "0.0.0.0:25565"          # public port players use

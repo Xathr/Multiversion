@@ -8,6 +8,7 @@
 
 #![allow(clippy::too_many_lines)]
 
+pub mod color;
 pub mod config;
 pub mod crypto;
 pub mod net;
@@ -59,15 +60,16 @@ mod plugin {
             let folder = context.get_data_folder();
             let path = format!("{folder}/config.toml");
             let config = crate::config::Config::load_or_create(&path).map_err(|e| format!("multiversion: {e}"))?;
+            crate::color::set_enabled(config.console_colors);
             // Pumpkin lets a plugin write only its own data folder, so the three pumpkin.toml settings
             // it needs are written out ready to paste, and checked for at runtime.
             let snippet = crate::config::pumpkin_snippet(&config);
             let _ = std::fs::write(format!("{folder}/pumpkin-settings.txt"), &snippet);
             crate::log::info(&format!(
                 "listening on {} for Minecraft {} clients, forwarding to Pumpkin at {}",
-                config.listen.address,
-                crate::translate::allowed_range(&config.versions),
-                config.backend.address
+                crate::color::dim(&config.listen.address),
+                crate::color::version(&crate::translate::allowed_range(&config.versions)),
+                crate::color::dim(&config.backend.address)
             ));
             if config.backend.forwarding_secret.is_empty() {
                 crate::log::warn("backend.forwarding_secret is empty; Pumpkin will reject logins. Set it in config.toml and pumpkin.toml.");
@@ -107,20 +109,24 @@ pub mod log {
         warn(msg);
     }
     #[cfg(target_arch = "wasm32")]
+    fn tagged(msg: &str) -> String {
+        format!("{} {msg}", crate::color::tag("[multiversion]"))
+    }
+    #[cfg(target_arch = "wasm32")]
     pub fn info(msg: &str) {
-        pumpkin_plugin_api::logging::log(pumpkin_plugin_api::logging::LogLevel::Info, &format!("[multiversion] {msg}"));
+        pumpkin_plugin_api::logging::log(pumpkin_plugin_api::logging::LogLevel::Info, &tagged(msg));
     }
     #[cfg(target_arch = "wasm32")]
     pub fn warn(msg: &str) {
-        pumpkin_plugin_api::logging::log(pumpkin_plugin_api::logging::LogLevel::Warn, &format!("[multiversion] {msg}"));
+        pumpkin_plugin_api::logging::log(pumpkin_plugin_api::logging::LogLevel::Warn, &tagged(&crate::color::warn(msg)));
     }
     #[cfg(target_arch = "wasm32")]
     pub fn error(msg: &str) {
-        pumpkin_plugin_api::logging::log(pumpkin_plugin_api::logging::LogLevel::Error, &format!("[multiversion] {msg}"));
+        pumpkin_plugin_api::logging::log(pumpkin_plugin_api::logging::LogLevel::Error, &tagged(&crate::color::bad(msg)));
     }
     #[cfg(target_arch = "wasm32")]
     pub fn debug(msg: &str) {
-        pumpkin_plugin_api::logging::log(pumpkin_plugin_api::logging::LogLevel::Debug, &format!("[multiversion] {msg}"));
+        pumpkin_plugin_api::logging::log(pumpkin_plugin_api::logging::LogLevel::Debug, &tagged(msg));
     }
     #[cfg(not(target_arch = "wasm32"))]
     pub fn info(msg: &str) {

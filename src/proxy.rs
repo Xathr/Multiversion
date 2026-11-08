@@ -106,7 +106,7 @@ impl ProxyHandler {
     fn close(&mut self, reactor: &mut Reactor, client: Token, reason: &str, abrupt: bool) {
         if let Some(c) = self.conns.remove(&client) {
             if c.phase != Phase::Status && c.phase != Phase::StatusBackendHandshake && c.phase != Phase::StatusBackendWait && !reason.starts_with("status") {
-                let msg = format!("{} disconnected: {reason}", c.describe());
+                let msg = format!("{} {} {reason}", c.describe(), crate::color::warn("disconnected:"));
                 if c.phase == Phase::Handshake && c.username.is_empty() {
                     // Never sent a handshake: a port scanner or a client's connection probe.
                     log::debug(&msg);
@@ -235,7 +235,7 @@ pub fn tick() {
     let Some(proxy) = guard.as_mut() else { return };
     proxy.reactor.run_for(&mut proxy.handler, SLICE_MS);
     if proxy.reactor.stopped() {
-        log::info("proxy stopped");
+        log::info(&crate::color::warn("proxy stopped"));
         *guard = None;
     }
 }
@@ -257,7 +257,7 @@ pub fn start(config: Config) -> Result<(), String> {
         }
         return Err(e);
     }
-    log::info(&format!("accepting connections on {listen}"));
+    log::info(&format!("{} on {}", crate::color::good("accepting connections"), crate::color::version(&listen.to_string())));
     let handler = ProxyHandler {
         config,
         keys,

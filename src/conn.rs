@@ -4,6 +4,7 @@
 use std::net::SocketAddr;
 
 use crate::auth::{Profile, Property};
+use crate::color;
 use crate::config::Config;
 use crate::crypto::{self, ServerKeys};
 use crate::net::reactor::Token;
@@ -200,7 +201,7 @@ impl Connection {
                         _ => "native".to_string(),
                     };
                     let auth = if shared.config.auth.online_mode { "online" } else { "offline" };
-                    out.push(Action::Log(format!("{} joined ({how}, {auth} mode)", self.describe())));
+                    out.push(Action::Log(format!("{} {} {}", self.describe(), color::good("joined"), color::dim(&format!("({how}, {auth} mode)")))));
                     // Both sides enter configuration. Tell the backend, release held packets.
                     self.phase = Phase::Configuration;
                     self.state = State::Configuration;
@@ -413,7 +414,7 @@ impl Connection {
                 self.kick_json("Invalid session (Try restarting your game and the launcher)", out);
             }
             crate::auth::AuthOutcome::Error(e) => {
-                out.push(Action::Log(format!("session check failed for {}: {e}", self.username)));
+                out.push(Action::Log(color::bad(&format!("session check failed for {}: {e}", self.username))));
                 self.kick_json("Authentication servers are down. Please try again later, sorry!", out);
             }
         }
@@ -462,7 +463,7 @@ impl Connection {
         match self.phase {
             Phase::StatusBackendHandshake => self.finish_status(None, shared, out),
             _ => {
-                out.push(Action::Log(format!("backend connect failed: {error}")));
+                out.push(Action::Log(color::bad(&format!("backend connect failed: {error}"))));
                 self.kick_json("The server is starting up. Please try again in a moment.", out);
             }
         }
@@ -475,7 +476,7 @@ impl Connection {
             match self.backend_in.next_packet() {
                 Ok(Some(pkt)) => {
                     if let Err(e) = self.handle_backend_packet(pkt, shared, out) {
-                        out.push(Action::Log(format!("backend packet error for {}: {e}", self.username)));
+                        out.push(Action::Log(color::bad(&format!("backend packet error for {}: {e}", self.username))));
                         let msg = if e.contains("pumpkin.toml") { "Server misconfigured: see the server console." } else { "Internal proxy error" };
                         self.kick_json(msg, out);
                         return;
@@ -486,7 +487,7 @@ impl Connection {
                 }
                 Ok(None) => return,
                 Err(e) => {
-                    out.push(Action::Log(format!("backend framing error: {e}")));
+                    out.push(Action::Log(color::bad(&format!("backend framing error: {e}"))));
                     self.kick_json("Internal proxy error", out);
                     return;
                 }
@@ -550,7 +551,7 @@ impl Connection {
                 ids::LOGIN_C_DISCONNECT => {
                     let mut r = Reader::new(&payload);
                     let reason = r.string().unwrap_or("{}").to_string();
-                    out.push(Action::Log(format!("backend refused login for {}: {reason}", self.username)));
+                    out.push(Action::Log(color::bad(&format!("backend refused login for {}: {reason}", self.username))));
                     if reason.contains("Unable to verify player details") {
                         out.push(Action::Log("Pumpkin rejected the forwarded identity: [networking.proxy.velocity] secret in pumpkin.toml must equal forwarding_secret in plugins/data/multiversion/config.toml (see plugins/data/multiversion/pumpkin-settings.txt), then restart".into()));
                     }
@@ -667,7 +668,7 @@ impl Connection {
             (State::Configuration, ids::CONFIG_C_FINISH) => self.state = State::Play,
             (State::Play, ids::PLAY_C_START_CONFIGURATION) => self.state = State::Configuration,
             (State::Configuration, ids::CONFIG_C_DISCONNECT) | (State::Play, ids::PLAY_C_DISCONNECT) => {
-                out.push(Action::Log(format!("{} disconnected by server", self.username)));
+                out.push(Action::Log(format!("{} {}", color::name(&self.username), color::warn("disconnected by server"))));
             }
             _ => {}
         }
@@ -710,9 +711,15 @@ impl Connection {
 
     pub fn describe(&self) -> String {
         if self.username.is_empty() {
-            format!("{} ({})", self.peer, self.client_version.name())
+            format!("{} ({})", color::dim(&self.peer.to_string()), color::version(&self.client_version.name()))
         } else {
-            format!("{} [{}] ({}) uuid {}", self.username, self.peer, self.client_version.name(), uuid_to_string(self.client_uuid))
+            format!(
+                "{} {} ({}) {}",
+                color::name(&self.username),
+                color::dim(&format!("[{}]", self.peer)),
+                color::version(&self.client_version.name()),
+                color::dim(&format!("uuid {}", uuid_to_string(self.client_uuid)))
+            )
         }
     }
 }

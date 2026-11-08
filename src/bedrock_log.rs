@@ -6,6 +6,8 @@ use pumpkin_plugin_api::events::{EventHandler, FromIntoEvent, PlayerJoinEvent, P
 use pumpkin_plugin_api::player::{BedrockDeviceOs, Player};
 use pumpkin_plugin_api::Server;
 
+use crate::color;
+
 /// Readable name for a Bedrock device.
 pub fn device_name(os: BedrockDeviceOs) -> &'static str {
     match os {
@@ -33,12 +35,12 @@ fn describe(player: &Player) -> Option<String> {
     let s = bedrock.get_settings();
     let version = if s.game_version.is_empty() { "unknown version".to_string() } else { s.game_version.clone() };
     Some(format!(
-        "{} [{}] (Bedrock {}, {}) uuid {}",
-        player.get_name(),
-        player.get_ip(),
-        version,
-        device_name(s.device_os),
-        uuid_string(player),
+        "{} {} ({}{}) {}",
+        color::name(&player.get_name()),
+        color::dim(&format!("[{}]", player.get_ip())),
+        color::version(&format!("Bedrock {version}")),
+        color::dim(&format!(", {}", device_name(s.device_os))),
+        color::dim(&format!("uuid {}", uuid_string(player))),
     ))
 }
 
@@ -53,7 +55,7 @@ pub struct JoinLog;
 impl EventHandler<PlayerJoinEvent> for JoinLog {
     fn handle(&self, _server: Server, e: <PlayerJoinEvent as FromIntoEvent>::Data) -> <PlayerJoinEvent as FromIntoEvent>::Data {
         if let Some(who) = describe(&e.player) {
-            crate::log::info(&format!("{who} joined (native Bedrock connection)"));
+            crate::log::info(&format!("{who} {} {}", color::good("joined"), color::dim("(native Bedrock connection)")));
         }
         e
     }
@@ -63,7 +65,7 @@ pub struct LeaveLog;
 impl EventHandler<PlayerLeaveEvent> for LeaveLog {
     fn handle(&self, _server: Server, e: <PlayerLeaveEvent as FromIntoEvent>::Data) -> <PlayerLeaveEvent as FromIntoEvent>::Data {
         if let Some(who) = describe(&e.player) {
-            crate::log::info(&format!("{who} disconnected"));
+            crate::log::info(&format!("{who} {}", color::warn("disconnected")));
         }
         e
     }

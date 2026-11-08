@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// Colour the plugin's console messages (ANSI codes, like Pumpkin's own output).
+    pub console_colors: bool,
     pub listen: Listen,
     pub backend: Backend,
     pub auth: Auth,
@@ -81,6 +83,7 @@ impl Default for Config {
             status: Status::default(),
             versions: Versions::default(),
             limits: Limits::default(),
+            console_colors: true,
         }
     }
 }
