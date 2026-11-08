@@ -61,6 +61,7 @@ mod plugin {
             let path = format!("{folder}/config.toml");
             let config = crate::config::Config::load_or_create(&path).map_err(|e| format!("multiversion: {e}"))?;
             crate::color::set_enabled(config.console_colors);
+            crate::config::set_active(config.clone());
             // Pumpkin lets a plugin write only its own data folder, so the three pumpkin.toml settings
             // it needs are written out ready to paste, and checked for at runtime.
             let snippet = crate::config::pumpkin_snippet(&config);
@@ -99,6 +100,9 @@ mod plugin {
 pub mod log {
     /// Logs a warning once per `key` for the life of the plugin.
     pub fn warn_once(key: &str, msg: &str) {
+        if !crate::config::get().logging.errors {
+            return;
+        }
         static SEEN: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
         let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
         if seen.iter().any(|k| k == key) {

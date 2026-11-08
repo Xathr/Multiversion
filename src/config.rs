@@ -16,6 +16,8 @@ pub struct Config {
     pub status: Status,
     pub versions: Versions,
     pub limits: Limits,
+    pub messages: Messages,
+    pub logging: Logging,
 }
 
 /// Where players connect. This is the port you open in the firewall.
@@ -84,6 +86,8 @@ impl Default for Config {
             versions: Versions::default(),
             limits: Limits::default(),
             console_colors: true,
+            messages: Messages::default(),
+            logging: Logging::default(),
         }
     }
 }
@@ -124,6 +128,76 @@ impl Default for Limits {
     fn default() -> Self {
         Self { compression_threshold: 256, max_connections: 200, login_timeout_secs: 30 }
     }
+}
+
+/// Messages players see when they are disconnected.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Messages {
+    /// Pumpkin isn't accepting connections yet (starting up or stopped).
+    pub server_starting: String,
+    /// Mojang's session servers couldn't be reached.
+    pub auth_servers_down: String,
+    /// Mojang said the player's session isn't valid.
+    pub invalid_session: String,
+    /// The name Mojang returned doesn't match the one the client sent.
+    pub username_mismatch: String,
+    /// Something went wrong in the plugin. Details are in the console.
+    pub internal_error: String,
+    /// pumpkin.toml isn't set up for the plugin. Details are in the console.
+    pub misconfigured: String,
+    /// The client sent something the plugin couldn't read. {error} is the detail.
+    pub protocol_error: String,
+}
+
+impl Default for Messages {
+    fn default() -> Self {
+        Self {
+            server_starting: "The server is starting up. Please try again in a moment.".into(),
+            auth_servers_down: "Authentication servers are down. Please try again later, sorry!".into(),
+            invalid_session: "Invalid session (Try restarting your game and the launcher)".into(),
+            username_mismatch: "Username mismatch".into(),
+            internal_error: "Internal proxy error".into(),
+            misconfigured: "Server misconfigured: see the server console.".into(),
+            protocol_error: "Protocol error: {error}".into(),
+        }
+    }
+}
+
+/// What the plugin writes to the server console.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Logging {
+    /// A line when a player joins, with their version and address.
+    pub joins: bool,
+    /// A line when a player leaves, with the reason.
+    pub leaves: bool,
+    /// Join and leave lines for Bedrock players (version and device).
+    pub bedrock: bool,
+    /// Errors such as refused logins and translation problems.
+    pub errors: bool,
+    /// Every connection step: handshakes, server-list pings, logins, backend connections.
+    /// Useful when someone can't join; noisy otherwise.
+    pub debug: bool,
+}
+
+impl Default for Logging {
+    fn default() -> Self {
+        Self { joins: true, leaves: true, bedrock: true, errors: true, debug: false }
+    }
+}
+
+static ACTIVE: std::sync::OnceLock<Config> = std::sync::OnceLock::new();
+
+/// Makes `config` the one `get()` returns. Called once when the plugin loads.
+pub fn set_active(config: Config) {
+    let _ = ACTIVE.set(config);
+}
+
+/// The loaded config (defaults before load, e.g. in tests).
+pub fn get() -> &'static Config {
+    static DEFAULT: std::sync::OnceLock<Config> = std::sync::OnceLock::new();
+    ACTIVE.get().unwrap_or_else(|| DEFAULT.get_or_init(Config::default))
 }
 
 pub const FILE_HEADER: &str = "# multiversion: lets other Minecraft versions join this Pumpkin server.\n\

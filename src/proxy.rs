@@ -105,7 +105,7 @@ impl ProxyHandler {
 
     fn close(&mut self, reactor: &mut Reactor, client: Token, reason: &str, abrupt: bool) {
         if let Some(c) = self.conns.remove(&client) {
-            if c.phase != Phase::Status && c.phase != Phase::StatusBackendHandshake && c.phase != Phase::StatusBackendWait && !reason.starts_with("status") {
+            if crate::config::get().logging.leaves && c.phase != Phase::Status && c.phase != Phase::StatusBackendHandshake && c.phase != Phase::StatusBackendWait && !reason.starts_with("status") {
                 let msg = format!("{} {} {reason}", c.describe(), crate::color::warn("disconnected:"));
                 if c.phase == Phase::Handshake && c.username.is_empty() {
                     // Never sent a handshake: a port scanner or a client's connection probe.
@@ -137,8 +137,14 @@ impl Handler for ProxyHandler {
         match event {
             Event::Accepted { token, peer } => {
                 if self.conns.len() >= self.config.limits.max_connections {
+                    if self.config.logging.debug {
+                        log::info(&format!("{} {peer} refused: limits.max_connections ({}) reached", crate::color::dim("debug:"), self.config.limits.max_connections));
+                    }
                     reactor.close_now(token);
                     return;
+                }
+                if self.config.logging.debug {
+                    log::info(&format!("{} {peer} connected", crate::color::dim("debug:")));
                 }
                 self.conns.insert(token, Connection::new(token, peer));
             }

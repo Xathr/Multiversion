@@ -125,7 +125,25 @@ kick_unsupported_message = "This server supports Minecraft {versions}. You are o
 compression_threshold = 256
 max_connections = 200
 login_timeout_secs = 30
+
+[messages]                         # what players see when they're disconnected
+server_starting = "The server is starting up. Please try again in a moment."
+auth_servers_down = "Authentication servers are down. Please try again later, sorry!"
+invalid_session = "Invalid session (Try restarting your game and the launcher)"
+username_mismatch = "Username mismatch"
+internal_error = "Internal proxy error"
+misconfigured = "Server misconfigured: see the server console."
+protocol_error = "Protocol error: {error}"
+
+[logging]                          # what goes in the console
+joins = true
+leaves = true
+bedrock = true                     # Bedrock players' join/leave lines
+errors = true
+debug = false                      # every connection step; turn on when someone can't join
 ```
+
+Settings missing from an older config file use the defaults above. Restart after editing.
 
 Clients on versions without a translator see the server as incompatible in the server list and get
 the kick message if they try anyway.

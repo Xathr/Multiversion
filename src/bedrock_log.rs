@@ -54,6 +54,9 @@ fn uuid_string(player: &Player) -> String {
 pub struct JoinLog;
 impl EventHandler<PlayerJoinEvent> for JoinLog {
     fn handle(&self, _server: Server, e: <PlayerJoinEvent as FromIntoEvent>::Data) -> <PlayerJoinEvent as FromIntoEvent>::Data {
+        if !crate::config::get().logging.bedrock {
+            return e;
+        }
         if let Some(who) = describe(&e.player) {
             crate::log::info(&format!("{who} {} {}", color::good("joined"), color::dim("(native Bedrock connection)")));
         }
@@ -64,6 +67,9 @@ impl EventHandler<PlayerJoinEvent> for JoinLog {
 pub struct LeaveLog;
 impl EventHandler<PlayerLeaveEvent> for LeaveLog {
     fn handle(&self, _server: Server, e: <PlayerLeaveEvent as FromIntoEvent>::Data) -> <PlayerLeaveEvent as FromIntoEvent>::Data {
+        if !crate::config::get().logging.bedrock {
+            return e;
+        }
         if let Some(who) = describe(&e.player) {
             crate::log::info(&format!("{who} {}", color::warn("disconnected")));
         }

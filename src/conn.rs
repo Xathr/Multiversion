@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 
 use crate::auth::{Profile, Property};
 use crate::color;
+use crate::config;
 use crate::config::Config;
 use crate::crypto::{self, ServerKeys};
 use crate::net::reactor::Token;
@@ -174,7 +175,7 @@ impl Connection {
                 }
                 Ok(None) => return,
                 Err(e) => {
-                    self.kick_json(&format!("Protocol error: {e}"), out);
+                    self.kick_json(&config::get().messages.protocol_error.replace("{error}", &e.to_string()), out);
                     return;
                 }
             }
@@ -201,7 +202,9 @@ impl Connection {
                         _ => "native".to_string(),
                     };
                     let auth = if shared.config.auth.online_mode { "online" } else { "offline" };
-                    out.push(Action::Log(format!("{} {} {}", self.describe(), color::good("joined"), color::dim(&format!("({how}, {auth} mode)")))));
+                    if config::get().logging.joins {
+                        out.push(Action::Log(format!("{} {} {}", self.describe(), color::good("joined"), color::dim(&format!("({how}, {auth} mode)")))));
+                    }
                     // Both sides enter configuration. Tell the backend, release held packets.
                     self.phase = Phase::Configuration;
                     self.state = State::Configuration;
@@ -220,7 +223,7 @@ impl Connection {
         }
     }
 
-    fn handle_handshake(&mut self, id: i32, payload: &[u8], shared: &Shared, _out: &mut Vec<Action>) -> Result<(), String> {
+    fn handle_handshake(&mut self, id: i32, payload: &[u8], shared: &Shared, out: &mut Vec<Action>) -> Result<(), String> {
         if id != 0 {
             return Err("expected handshake".into());
         }
@@ -230,6 +233,8 @@ impl Connection {
         let _port = r.u16().map_err(|e| e.to_string())?;
         let next = r.varint().map_err(|e| e.to_string())?;
         self.client_version = Version { protocol };
+        let peer = self.peer;
+        debug_log(out, || format!("{peer} handshake: {} (protocol {protocol}), {}", Version { protocol }.name(), match next { 1 => "server list ping", 2 => "login", 3 => "transfer", _ => "unknown" }));
         match next {
             1 => {
                 self.phase = Phase::Status;
@@ -312,6 +317,9 @@ impl Connection {
     }
 
     fn finish_status(&mut self, backend_json: Option<&str>, shared: &Shared, out: &mut Vec<Action>) {
+        let peer = self.peer;
+        let live = backend_json.is_some();
+        debug_log(out, || format!("{peer} server list reply ({})", if live { "from Pumpkin" } else { "Pumpkin unreachable, fallback" }));
         let mut json: serde_json::Value = backend_json
             .and_then(|j| serde_json::from_str(j).ok())
             .unwrap_or_else(|| serde_json::from_str(&self.status_fallback_json(shared)).unwrap());
@@ -353,6 +361,8 @@ impl Connection {
         };
         self.username = name.clone();
         self.client_uuid = uuid;
+        let online = shared.config.auth.online_mode;
+        debug_log(out, || format!("{} login start as {name} ({} mode)", self.peer, if online { "online" } else { "offline" }));
         if shared.config.auth.online_mode {
             self.verify_token = crypto::random_bytes(4);
             let mut w = Writer::new();
@@ -394,6 +404,7 @@ impl Connection {
         let hash = crypto::server_hash("", &secret, &shared.keys.public_der);
         let ip = if shared.config.auth.prevent_proxy_connections { Some(self.peer.ip().to_string()) } else { None };
         self.phase = Phase::LoginAuth;
+        debug_log(out, || format!("{} encryption set up, checking the session with Mojang", self.username));
         out.push(Action::StartAuth { username: self.username.clone(), server_hash: hash, ip });
         Ok(())
     }
@@ -403,19 +414,20 @@ impl Connection {
         match result {
             crate::auth::AuthOutcome::Ok(profile) => {
                 if !profile.name.eq_ignore_ascii_case(&self.username) {
-                    self.kick_json("Username mismatch", out);
+                    self.kick_json(&config::get().messages.username_mismatch, out);
                     return;
                 }
                 self.username = profile.name.clone();
+                debug_log(out, || format!("{} verified by Mojang (uuid {})", profile.name, uuid_to_string(profile.id)));
                 self.profile = Some(profile);
                 self.after_auth(shared, out);
             }
             crate::auth::AuthOutcome::InvalidSession => {
-                self.kick_json("Invalid session (Try restarting your game and the launcher)", out);
+                self.kick_json(&config::get().messages.invalid_session, out);
             }
             crate::auth::AuthOutcome::Error(e) => {
-                out.push(Action::Log(color::bad(&format!("session check failed for {}: {e}", self.username))));
-                self.kick_json("Authentication servers are down. Please try again later, sorry!", out);
+                err_log(out, color::bad(&format!("session check failed for {}: {e}", self.username)));
+                self.kick_json(&config::get().messages.auth_servers_down, out);
             }
         }
     }
@@ -432,6 +444,7 @@ impl Connection {
             self.client_out.compression = threshold;
         }
         self.phase = Phase::BackendConnecting;
+        debug_log(out, || format!("{} connecting to Pumpkin at {}", self.username, shared.backend_addr));
         out.push(Action::ConnectBackend);
     }
 
@@ -453,6 +466,7 @@ impl Connection {
                 w.uuid(profile.id);
                 let hello = Packet::new(ids::LOGIN_S_HELLO, w.into_inner());
                 self.backend_pkt(&hello, out);
+                debug_log(out, || format!("{} connected to Pumpkin, logging in with forwarded identity", self.username));
                 self.phase = Phase::BackendLogin;
             }
             _ => {}
@@ -463,8 +477,8 @@ impl Connection {
         match self.phase {
             Phase::StatusBackendHandshake => self.finish_status(None, shared, out),
             _ => {
-                out.push(Action::Log(color::bad(&format!("backend connect failed: {error}"))));
-                self.kick_json("The server is starting up. Please try again in a moment.", out);
+                err_log(out, color::bad(&format!("backend connect failed: {error}")));
+                self.kick_json(&config::get().messages.server_starting, out);
             }
         }
     }
@@ -476,8 +490,9 @@ impl Connection {
             match self.backend_in.next_packet() {
                 Ok(Some(pkt)) => {
                     if let Err(e) = self.handle_backend_packet(pkt, shared, out) {
-                        out.push(Action::Log(color::bad(&format!("backend packet error for {}: {e}", self.username))));
-                        let msg = if e.contains("pumpkin.toml") { "Server misconfigured: see the server console." } else { "Internal proxy error" };
+                        err_log(out, color::bad(&format!("backend packet error for {}: {e}", self.username)));
+                        let m = &config::get().messages;
+                        let msg = if e.contains("pumpkin.toml") { m.misconfigured.as_str() } else { m.internal_error.as_str() };
                         self.kick_json(msg, out);
                         return;
                     }
@@ -487,8 +502,8 @@ impl Connection {
                 }
                 Ok(None) => return,
                 Err(e) => {
-                    out.push(Action::Log(color::bad(&format!("backend framing error: {e}"))));
-                    self.kick_json("Internal proxy error", out);
+                    err_log(out, color::bad(&format!("backend framing error: {e}")));
+                    self.kick_json(&config::get().messages.internal_error, out);
                     return;
                 }
             }
@@ -551,7 +566,7 @@ impl Connection {
                 ids::LOGIN_C_DISCONNECT => {
                     let mut r = Reader::new(&payload);
                     let reason = r.string().unwrap_or("{}").to_string();
-                    out.push(Action::Log(color::bad(&format!("backend refused login for {}: {reason}", self.username))));
+                    err_log(out, color::bad(&format!("backend refused login for {}: {reason}", self.username)));
                     if reason.contains("Unable to verify player details") {
                         out.push(Action::Log("Pumpkin rejected the forwarded identity: [networking.proxy.velocity] secret in pumpkin.toml must equal forwarding_secret in plugins/data/multiversion/config.toml (see plugins/data/multiversion/pumpkin-settings.txt), then restart".into()));
                     }
@@ -578,6 +593,7 @@ impl Connection {
                     let session_id = r.uuid().unwrap_or(0);
                     let pkt = self.encode_login_finished(uuid, &name, &props, session_id);
                     self.client_pkt(&pkt, out);
+                    debug_log(out, || format!("{name} accepted by Pumpkin, waiting for the client to finish login"));
                     self.phase = Phase::AwaitClientLoginAck;
                     Ok(())
                 }
@@ -668,7 +684,9 @@ impl Connection {
             (State::Configuration, ids::CONFIG_C_FINISH) => self.state = State::Play,
             (State::Play, ids::PLAY_C_START_CONFIGURATION) => self.state = State::Configuration,
             (State::Configuration, ids::CONFIG_C_DISCONNECT) | (State::Play, ids::PLAY_C_DISCONNECT) => {
-                out.push(Action::Log(format!("{} {}", color::name(&self.username), color::warn("disconnected by server"))));
+                if config::get().logging.leaves {
+                    out.push(Action::Log(format!("{} {}", color::name(&self.username), color::warn("disconnected by server"))));
+                }
             }
             _ => {}
         }
@@ -721,5 +739,19 @@ impl Connection {
                 color::dim(&format!("uuid {}", uuid_to_string(self.client_uuid)))
             )
         }
+    }
+}
+
+/// Queues an error line for the console, unless `[logging] errors = false`.
+fn err_log(out: &mut Vec<Action>, msg: String) {
+    if config::get().logging.errors {
+        out.push(Action::Log(msg));
+    }
+}
+
+/// Queues a debug line for the console when `[logging] debug = true`.
+fn debug_log(out: &mut Vec<Action>, msg: impl FnOnce() -> String) {
+    if config::get().logging.debug {
+        out.push(Action::Log(format!("{} {}", color::dim("debug:"), msg())));
     }
 }
