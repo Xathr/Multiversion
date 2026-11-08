@@ -16,6 +16,9 @@ pub mod data_1_21_4;
 pub mod data_1_21_2;
 pub mod data_1_21;
 pub mod data_1_20_5;
+pub mod data_1_20_3;
+pub mod data_1_20_2;
+pub mod data_1_20;
 pub mod v26_2;
 pub mod v26_1;
 pub mod v1_21;
@@ -27,6 +30,9 @@ pub mod v1_21_9;
 pub mod v1_21_11;
 pub mod v1_21_6;
 pub mod v1_20_5;
+pub mod v1_20_3;
+pub mod v1_20_2;
+pub mod v1_20;
 
 use crate::proto::version::{Version, BACKEND, KNOWN};
 
@@ -65,19 +71,33 @@ pub trait Translator {
     fn clientbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult;
     /// Client → server: input is a `to`-version packet, output `from`-version packets (0..n).
     fn serverbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult;
+    /// Packets this step sends to the server by itself, on the client's behalf (`from`-version
+    /// packets, each with the state it is sent in). The chain collects them after every call.
+    fn take_replies(&mut self) -> Vec<(State, Packet)> {
+        Vec::new()
+    }
+    /// The client has no configuration phase (1.20.1 and older): the proxy acknowledges login
+    /// to the server itself and this step stands in for the client during configuration.
+    fn emulates_configuration(&self) -> bool {
+        false
+    }
+    /// The proxy acknowledged login on the client's behalf (steps that emulate configuration).
+    fn login_acknowledged(&mut self) {}
 }
 
 /// All steps for one client, newest first.
 pub struct Chain {
     steps: Vec<Box<dyn Translator>>,
     pub client: Version,
+    /// Steps' own packets for the server, already translated to the backend version.
+    replies: Vec<Packet>,
 }
 
 impl Chain {
     /// Builds the chain for `client`, or `None` if the version is not supported.
     pub fn for_client(client: Version) -> Option<Chain> {
         if client == BACKEND {
-            return Some(Chain { steps: Vec::new(), client });
+            return Some(Chain { steps: Vec::new(), client, replies: Vec::new() });
         }
         let mut steps: Vec<Box<dyn Translator>> = Vec::new();
         let mut current = BACKEND;
@@ -86,7 +106,7 @@ impl Chain {
             current = step.to();
             steps.push(step);
         }
-        Some(Chain { steps, client })
+        Some(Chain { steps, client, replies: Vec::new() })
     }
 
     pub fn is_passthrough(&self) -> bool {
@@ -95,12 +115,13 @@ impl Chain {
 
     pub fn clientbound(&mut self, state: State, pkt: Packet) -> Result<Vec<Packet>, String> {
         let mut current = vec![pkt];
-        for step in &mut self.steps {
+        for i in 0..self.steps.len() {
             let mut next = Vec::with_capacity(current.len());
             for p in &current {
-                step.clientbound(state, p, &mut next)?;
+                self.steps[i].clientbound(state, p, &mut next)?;
             }
             current = next;
+            self.collect_replies(i)?;
         }
         Ok(current)
     }
@@ -116,7 +137,46 @@ impl Chain {
         }
         Ok(current)
     }
+
+    /// Takes step `i`'s own packets up through the newer steps, towards the server.
+    fn collect_replies(&mut self, i: usize) -> TResult {
+        for (state, pkt) in self.steps[i].take_replies() {
+            let mut current = vec![pkt];
+            for step in self.steps[..i].iter_mut().rev() {
+                let mut next = Vec::with_capacity(current.len());
+                for p in &current {
+                    step.serverbound(state, p, &mut next)?;
+                }
+                current = next;
+            }
+            self.replies.append(&mut current);
+        }
+        Ok(())
+    }
+
+    /// Packets for the server that the steps sent on the client's behalf (backend version),
+    /// in order; empty for clients that answer everything themselves.
+    pub fn take_replies(&mut self) -> Vec<Packet> {
+        std::mem::take(&mut self.replies)
+    }
+
+    /// The client has no configuration phase: the proxy must acknowledge login itself and call
+    /// `login_acknowledged`.
+    pub fn emulates_configuration(&self) -> bool {
+        self.steps.iter().any(|s| s.emulates_configuration())
+    }
+
+    /// Login was acknowledged to the server on the client's behalf; returns what the steps send
+    /// to start configuration (backend version).
+    pub fn login_acknowledged(&mut self) -> Result<Vec<Packet>, String> {
+        for i in 0..self.steps.len() {
+            self.steps[i].login_acknowledged();
+            self.collect_replies(i)?;
+        }
+        Ok(self.take_replies())
+    }
 }
+
 
 /// The translator that takes `from` one step down, if implemented.
 fn make_step(from: Version) -> Option<Box<dyn Translator>> {
@@ -132,23 +192,35 @@ fn make_step(from: Version) -> Option<Box<dyn Translator>> {
         775 => Some(Box::new(v1_21_11::V26_1To1_21_11::new())),
         772 => Some(Box::new(v1_21_6::V1_21_7To1_21_6::new())),
         767 => Some(Box::new(v1_20_5::V1_21To1_20_5::new())),
+        766 => Some(Box::new(v1_20_3::V1_20_5To1_20_3::new())),
+        765 => Some(Box::new(v1_20_2::V1_20_3To1_20_2::new())),
+        764 => Some(Box::new(v1_20::V1_20_2To1_20::new())),
         _ => None,
     }
 }
 
+/// Every protocol `Chain::for_client` can build, newest first. A step registered below a gap
+/// (one whose newer neighbour isn't implemented yet) is not reachable and not counted.
+fn reachable() -> &'static [i32] {
+    static REACHABLE: std::sync::OnceLock<Vec<i32>> = std::sync::OnceLock::new();
+    REACHABLE.get_or_init(|| {
+        let mut out = vec![BACKEND.protocol];
+        let mut v = BACKEND;
+        while let Some(step) = make_step(v) {
+            v = step.to();
+            out.push(v.protocol);
+        }
+        out
+    })
+}
+
 /// Lowest client version a chain exists for.
 pub fn lowest_supported() -> Version {
-    let mut v = BACKEND;
-    while let Some(step) = make_step(v) {
-        v = step.to();
-    }
-    v
+    Version { protocol: *reachable().last().expect("backend is always reachable") }
 }
 
 pub fn is_supported(client: Version) -> bool {
-    KNOWN.iter().any(|k| k.protocol == client.protocol)
-        && client.protocol <= BACKEND.protocol
-        && client.protocol >= lowest_supported().protocol
+    KNOWN.iter().any(|k| k.protocol == client.protocol) && reachable().contains(&client.protocol)
 }
 
 pub fn supported_range() -> String {
@@ -187,6 +259,88 @@ pub fn allowed_range(cfg: &crate::config::Versions) -> String {
 mod chain_tests {
     use super::*;
     use crate::proto::buf::{Reader, Writer};
+    use crate::proto::nbt::{self, Tag};
+
+    /// Stands in for the steps above 1.20.2: serverbound ids + 100, clientbound unchanged.
+    struct Shift;
+    impl Translator for Shift {
+        fn from(&self) -> Version {
+            Version { protocol: 765 }
+        }
+        fn to(&self) -> Version {
+            Version { protocol: 764 }
+        }
+        fn clientbound(&mut self, _: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+            out.push(pkt.clone());
+            Ok(())
+        }
+        fn serverbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+            let shift = if state == State::Play { 100 } else { 200 };
+            out.push(Packet::new(pkt.id + shift, pkt.payload.clone()));
+            Ok(())
+        }
+    }
+
+    /// What the 1.20.2 → 1.20 step answers on the client's behalf goes up through the newer
+    /// steps, in the state it belongs to, and comes out of the chain for the proxy to send.
+    #[test]
+    fn replies_go_through_the_newer_steps() {
+        let mut chain = Chain { steps: vec![Box::new(Shift), Box::new(v1_20::V1_20_2To1_20::new())], client: Version { protocol: 763 }, replies: Vec::new() };
+        assert!(chain.emulates_configuration());
+        let start = chain.login_acknowledged().unwrap();
+        assert_eq!(start.iter().map(|p| p.id).collect::<Vec<_>>(), vec![200 + v1_20::ids::new::S_CONFIG_CLIENT_INFORMATION]);
+        let out = chain.clientbound(State::Configuration, Packet::new(v1_20::ids::new::CONFIG_FINISH, Vec::new())).unwrap();
+        assert!(out.is_empty());
+        assert_eq!(chain.take_replies().iter().map(|p| p.id).collect::<Vec<_>>(), vec![200 + v1_20::ids::new::S_CONFIG_FINISH]);
+        chain.clientbound(State::Play, Packet::new(v1_20::ids::new::CHUNK_BATCH_FINISHED, vec![1])).unwrap();
+        assert_eq!(chain.take_replies().iter().map(|p| p.id).collect::<Vec<_>>(), vec![100 + v1_20::ids::new::S_CHUNK_BATCH_RECEIVED]);
+        assert!(chain.take_replies().is_empty());
+    }
+
+    /// Clients with a configuration phase answer for themselves: no replies, no emulation.
+    #[test]
+    fn chains_with_configuration_have_no_replies() {
+        let mut chain = Chain::for_client(Version { protocol: 766 }).unwrap();
+        assert!(!chain.emulates_configuration());
+        assert!(chain.login_acknowledged().unwrap().is_empty());
+        let mut w = Writer::new();
+        w.i64(0).varint(1);
+        chain.clientbound(State::Play, Packet::new(v26_2::ids::new::BLOCK_UPDATE, w.into_inner())).unwrap();
+        assert!(chain.take_replies().is_empty());
+    }
+
+    /// 1.20 / 1.20.1 is known, but only counts as supported once every step down to it exists.
+    #[test]
+    fn support_follows_the_chain() {
+        let v1_20 = Version { protocol: 763 };
+        assert_eq!(v1_20.name(), "1.20");
+        assert_eq!(Chain::for_client(v1_20).is_some(), is_supported(v1_20));
+        assert_eq!(Chain::for_client(Version { protocol: 764 }).is_some(), is_supported(Version { protocol: 764 }));
+        let cfg = crate::config::Versions::default();
+        for v in allowed_versions(&cfg) {
+            assert!(Chain::for_client(v).is_some(), "{} allowed without a chain", v.name());
+        }
+    }
+
+    /// The game profile 1.20.1 expects is uuid, name and properties, nothing after.
+    #[test]
+    fn login_finished_formats() {
+        let props = [("textures", "abc", Some("sig"))];
+        let base = {
+            let mut w = Writer::new();
+            w.uuid(7).string("Steve").varint(1).string("textures").string("abc").bool(true).string("sig");
+            w.into_inner()
+        };
+        for protocol in [763, 764, 765, 768, 775] {
+            assert_eq!(crate::proto::login::login_finished(protocol, 7, "Steve", &props, 9), base, "protocol {protocol}");
+        }
+        let mut strict = base.clone();
+        strict.push(1);
+        assert_eq!(crate::proto::login::login_finished(766, 7, "Steve", &props, 9), strict);
+        let mut session = base.clone();
+        session.extend_from_slice(&9u128.to_be_bytes());
+        assert_eq!(crate::proto::login::login_finished(777, 7, "Steve", &props, 9), session);
+    }
 
     /// A 26.3 block update for pink petals, through every step down to 1.21.4.
     #[test]
@@ -320,6 +474,96 @@ mod chain_tests {
         assert_eq!(r.varint().unwrap(), disc);
     }
 
+    /// 1.20.3 has no known-packs handshake: the chain answers the server's question for the
+    /// client (in the server's version) and the client never sees it.
+    #[test]
+    fn known_packs_are_answered_for_1_20_3() {
+        let mut chain = Chain::for_client(Version { protocol: 765 }).unwrap();
+        let mut w = Writer::new();
+        w.varint(1).string("minecraft").string("core").string("26.3");
+        let out = chain.clientbound(State::Configuration, Packet::new(0x0F, w.into_inner())).unwrap(); // 26.3 select_known_packs
+        assert!(out.is_empty());
+        let replies = chain.take_replies();
+        assert_eq!(replies.len(), 1);
+        assert_eq!((replies[0].id, replies[0].payload.clone()), (0x07, vec![0]), "26.3 select_known_packs, no packs");
+        assert!(chain.take_replies().is_empty());
+    }
+
+    /// A named, enchanted sword made in the 1.20.3 creative inventory (item NBT) reaches the
+    /// server with its components, and a named item from the server comes back unchanged.
+    #[test]
+    fn creative_sword_round_trips_through_1_20_3() {
+        let mut chain = Chain::for_client(Version { protocol: 765 }).unwrap();
+        let mut reg = Writer::new();
+        reg.string("minecraft:enchantment").varint(2).string("minecraft:protection").bool(false).string("minecraft:sharpness").bool(false);
+        chain.clientbound(State::Configuration, Packet::new(v26_2::ids::new::CONFIG_REGISTRY_DATA, reg.into_inner())).unwrap();
+
+        let old_sword = data_1_20_3::OLD_ITEM_NAMES.iter().position(|n| *n == "diamond_sword").unwrap() as i32;
+        let mut ench = Tag::compound();
+        ench.insert("id", Tag::String("minecraft:sharpness".into()));
+        ench.insert("lvl", Tag::Short(5));
+        let mut display = Tag::compound();
+        display.insert("Name", Tag::String(r#"{"text":"Excalibur"}"#.into()));
+        let mut tag = Tag::compound();
+        tag.insert("Damage", Tag::Int(0));
+        tag.insert("display", display);
+        tag.insert("Enchantments", Tag::List(vec![ench]));
+        let mut c = Writer::new();
+        c.i16(36).bool(true).varint(old_sword).i8(1);
+        nbt::write(&mut c, &tag);
+        let out = chain.serverbound(State::Play, Packet::new(v1_20_3::ids::old::S_SET_CREATIVE_MODE_SLOT, c.into_inner())).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id, v26_2::ids::new::S_SET_CREATIVE_MODE_SLOT);
+        let mut r = Reader::new(&out[0].payload);
+        assert_eq!(r.i16().unwrap(), 36);
+        assert_eq!(r.varint().unwrap(), 1);
+        let sword = data_26_2::NEW_ITEM_NAMES.iter().position(|n| *n == "diamond_sword").unwrap() as i32;
+        assert_eq!(r.varint().unwrap(), sword);
+        assert_eq!(r.varint().unwrap(), 2, "custom name and enchantments");
+        assert_eq!(r.varint().unwrap(), 0);
+        let mut found = Vec::new();
+        for _ in 0..2 {
+            let name = data_26_2::NEW_COMPONENT_NAMES[r.varint().unwrap() as usize];
+            let value = r.byte_array().unwrap();
+            found.push(name);
+            if name == "enchantments" {
+                assert_eq!(value, [1, 1, 5], "sharpness (registry id 1) level 5");
+            } else {
+                assert_eq!(nbt::read(&mut Reader::new(value)).unwrap().get("text"), Some(&Tag::String("Excalibur".into())));
+            }
+        }
+        found.sort();
+        assert_eq!(found, vec!["custom_name", "enchantments"]);
+
+        // the server's named item reaches the client as item NBT and comes back as it was
+        let mut name = Writer::new();
+        nbt::write(&mut name, &Tag::String("Gift".into()));
+        let custom_name = data_26_2::NEW_COMPONENT_NAMES.iter().position(|n| *n == "custom_name").unwrap() as i32;
+        let mut s = Writer::new();
+        s.varint(0).varint(1).i16(36);
+        s.varint(1).varint(sword).varint(1).varint(0).varint(custom_name).raw(&name.buf);
+        let out = chain.clientbound(State::Play, Packet::new(v26_2::ids::new::CONTAINER_SET_SLOT, s.into_inner())).unwrap();
+        assert_eq!(out[0].id, 0x15, "1.20.3 container_set_slot");
+        let mut r = Reader::new(&out[0].payload);
+        r.u8().unwrap();
+        r.varint().unwrap();
+        r.i16().unwrap();
+        let item = r.remaining().to_vec();
+        assert!(r.bool().unwrap());
+        assert_eq!(r.varint().unwrap(), old_sword);
+        r.i8().unwrap();
+        let tag = nbt::read_optional(&mut r).unwrap().unwrap();
+        assert_eq!(tag.get("display").unwrap().get("Name"), Some(&Tag::String("\"Gift\"".into())));
+        let mut c = Writer::new();
+        c.i16(36).raw(&item);
+        let back = chain.serverbound(State::Play, Packet::new(v1_20_3::ids::old::S_SET_CREATIVE_MODE_SLOT, c.into_inner())).unwrap();
+        let mut r = Reader::new(&back[0].payload);
+        r.i16().unwrap();
+        assert_eq!((r.varint().unwrap(), r.varint().unwrap(), r.varint().unwrap(), r.varint().unwrap()), (1, sword, 1, 0));
+        assert_eq!(r.varint().unwrap(), custom_name);
+        assert_eq!(r.byte_array().unwrap(), &name.buf[..]);
+    }
+
     /// 1.21's data-driven registries never reach a 1.20.5 client.
     #[test]
     fn new_registries_do_not_reach_1_20_5() {
@@ -330,6 +574,27 @@ mod chain_tests {
             w.varint(0);
             let out = chain.clientbound(State::Configuration, Packet::new(v26_2::ids::new::CONFIG_REGISTRY_DATA, w.into_inner())).unwrap();
             assert!(out.is_empty(), "{name} reached the client");
+        }
+    }
+}
+
+#[cfg(test)]
+mod support_tests {
+    use super::*;
+
+    /// Only versions a chain can be built for are offered to clients.
+    #[test]
+    fn supported_matches_buildable_chains() {
+        for k in KNOWN {
+            let v = Version { protocol: k.protocol };
+            assert_eq!(is_supported(v), Chain::for_client(v).is_some(), "{}", k.name);
+        }
+        assert!(is_supported(BACKEND));
+        assert!(!is_supported(Version { protocol: 762 }));
+        let range = allowed_range(&crate::config::Versions::default());
+        if !is_supported(Version { protocol: 765 }) {
+            assert!(!is_supported(Version { protocol: 764 }), "1.20.2 needs the 1.20.3 step's newer neighbour");
+            assert!(!range.contains("1.20.2"), "{range}");
         }
     }
 }
@@ -381,7 +646,32 @@ mod block_state_coverage {
         }
         assert!(stone.is_empty(), "states shown as stone: {stone:?}");
         assert!(super::is_supported(Version { protocol: 766 }));
-        assert_eq!(super::supported_range(), "1.20.5-26.3");
+    }
+
+    /// Every 26.3 block state reaches the 1.20.3 client as a valid state, and none falls back
+    /// to stone unless it is stone itself.
+    #[test]
+    fn every_state_reaches_1_20_3() {
+        let mut chain = Chain::for_client(Version { protocol: 765 }).unwrap();
+        let mut stone = Vec::new();
+        for s in 2..35723 {
+            let mut w = Writer::new();
+            w.i64(0);
+            w.varint(s);
+            let out = chain.clientbound(State::Play, Packet::new(v26_2::ids::new::BLOCK_UPDATE, w.into_inner())).unwrap();
+            assert_eq!(out[0].id, v1_20_3::ids::old::BLOCK_UPDATE, "1.20.3 block_update");
+            let mut r = Reader::new(&out[0].payload);
+            r.i64().unwrap();
+            let id = r.varint().unwrap();
+            assert!((0..data_1_20_3::OLD_BLOCK_STATE_COUNT as i32).contains(&id), "state {s} became {id}");
+            if id == 1 {
+                stone.push(s);
+            }
+        }
+        assert!(stone.is_empty(), "states shown as stone: {stone:?}");
+        assert!(super::is_supported(Version { protocol: 765 }));
+        assert_eq!(super::supported_range(), "1.20-26.3");
+        assert_eq!(super::allowed_range(&crate::config::Versions::default()), "1.20-26.3");
     }
 }
 #[cfg(test)]

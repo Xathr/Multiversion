@@ -12,6 +12,7 @@ use crate::net::reactor::Token;
 use crate::platform::now_millis;
 use crate::proto::buf::{offline_uuid, uuid_to_string, Reader, Writer};
 use crate::proto::frame::{Inbound, Outbound};
+use crate::proto::login;
 use crate::proto::version::{Version, BACKEND};
 use crate::translate::{self, Chain, Packet, State};
 
@@ -207,36 +208,41 @@ impl Connection {
             }
             Phase::AwaitClientLoginAck => {
                 if id == ids::LOGIN_S_ACKNOWLEDGED {
-                    let how = match &self.chain {
-                        Some(c) if !c.is_passthrough() => format!("translated to {}", crate::proto::version::BACKEND.name()),
-                        _ => "native".to_string(),
-                    };
-                    let auth = if shared.config.auth.online_mode { "online" } else { "offline" };
-                    if config::get().logging.joins {
-                        out.push(Action::Log(format!("{} {} {}", self.describe(), color::good("joined"), color::dim(&format!("({how}, {auth} mode)")))));
-                    }
-                    // Both sides enter configuration. Tell the backend, release held packets.
-                    self.phase = Phase::Configuration;
-                    self.client_in.max_frame = crate::proto::frame::MAX_FRAME;
-                    // A native client with the same compression threshold as Pumpkin gets Pumpkin's
-                    // compressed frames unchanged. The threshold must be high enough that the small
-                    // packets used to track login/configuration state are never compressed.
-                    let native = self.chain.as_ref().is_none_or(Chain::is_passthrough);
-                    let threshold = self.backend_in.compression;
-                    self.backend_in.keep_compressed = native && threshold >= 64 && threshold == self.client_out.compression;
-                    self.state = State::Configuration;
-                    self.client_state = State::Configuration;
-                    let ack = Packet::new(ids::LOGIN_S_ACKNOWLEDGED, Vec::new());
-                    self.backend_pkt(&ack, out);
-                    let held = std::mem::take(&mut self.held_clientbound);
-                    for bytes in held {
-                        out.push(Action::SendClient(bytes));
-                    }
+                    self.enter_configuration(shared, out);
                 }
                 Ok(())
             }
             Phase::Configuration | Phase::Play => self.relay_serverbound(id, payload, out),
             Phase::Closed => Ok(()),
+        }
+    }
+
+    /// The client acknowledged login (or, for clients without a configuration phase, the proxy
+    /// did for it): both sides enter configuration. Tell the backend, release held packets.
+    fn enter_configuration(&mut self, shared: &Shared, out: &mut Vec<Action>) {
+        let how = match &self.chain {
+            Some(c) if !c.is_passthrough() => format!("translated to {}", crate::proto::version::BACKEND.name()),
+            _ => "native".to_string(),
+        };
+        let auth = if shared.config.auth.online_mode { "online" } else { "offline" };
+        if config::get().logging.joins {
+            out.push(Action::Log(format!("{} {} {}", self.describe(), color::good("joined"), color::dim(&format!("({how}, {auth} mode)")))));
+        }
+        self.phase = Phase::Configuration;
+        self.client_in.max_frame = crate::proto::frame::MAX_FRAME;
+        // A native client with the same compression threshold as Pumpkin gets Pumpkin's
+        // compressed frames unchanged. The threshold must be high enough that the small
+        // packets used to track login/configuration state are never compressed.
+        let native = self.chain.as_ref().is_none_or(Chain::is_passthrough);
+        let threshold = self.backend_in.compression;
+        self.backend_in.keep_compressed = native && threshold >= 64 && threshold == self.client_out.compression;
+        self.state = State::Configuration;
+        self.client_state = State::Configuration;
+        let ack = Packet::new(ids::LOGIN_S_ACKNOWLEDGED, Vec::new());
+        self.backend_pkt(&ack, out);
+        let held = std::mem::take(&mut self.held_clientbound);
+        for bytes in held {
+            out.push(Action::SendClient(bytes));
         }
     }
 
@@ -386,14 +392,7 @@ impl Connection {
         debug_log(out, || format!("{} login start as {name} ({} mode)", self.peer, if online { "online" } else { "offline" }));
         if shared.config.auth.online_mode {
             self.verify_token = crypto::random_bytes(4);
-            let mut w = Writer::new();
-            w.string(""); // server id
-            w.byte_array(&shared.keys.public_der);
-            w.byte_array(&self.verify_token);
-            if self.client_version.protocol >= 766 {
-                w.bool(true); // should authenticate
-            }
-            let pkt = Packet::new(ids::LOGIN_C_HELLO, w.into_inner());
+            let pkt = self.encode_encryption_request(&shared.keys.public_der);
             self.client_pkt(&pkt, out);
             self.phase = Phase::LoginAwaitKey;
             Ok(())
@@ -621,10 +620,20 @@ impl Connection {
                         })
                         .map_err(|e| e.to_string())?;
                     let session_id = r.uuid().unwrap_or(0);
-                    let pkt = self.encode_login_finished(uuid, &name, &props, session_id);
+                    let props: Vec<(&str, &str, Option<&str>)> = props.iter().map(|p| (p.name.as_str(), p.value.as_str(), p.signature.as_deref())).collect();
+                    let pkt = Packet::new(ids::LOGIN_C_FINISHED, login::login_finished(self.client_version.protocol, uuid, &name, &props, session_id));
                     self.client_pkt(&pkt, out);
-                    debug_log(out, || format!("{name} accepted by Pumpkin, waiting for the client to finish login"));
-                    self.phase = Phase::AwaitClientLoginAck;
+                    if let Some(chain) = self.chain.as_mut().filter(|c| c.emulates_configuration()) {
+                        // 1.20.1 and older go straight to play and never acknowledge login: do it
+                        // for them, and let the chain play their part in configuration.
+                        debug_log(out, || format!("{name} accepted by Pumpkin, configuring on the client's behalf"));
+                        let start = chain.login_acknowledged()?;
+                        self.enter_configuration(shared, out);
+                        self.send_backend_packets(start, out);
+                    } else {
+                        debug_log(out, || format!("{name} accepted by Pumpkin, waiting for the client to finish login"));
+                        self.phase = Phase::AwaitClientLoginAck;
+                    }
                     Ok(())
                 }
                 _ => Ok(()),
@@ -646,26 +655,8 @@ impl Connection {
         }
     }
 
-    fn encode_login_finished(&self, uuid: u128, name: &str, props: &[Property], session_id: u128) -> Packet {
-        let v = self.client_version.protocol;
-        let mut w = Writer::new();
-        w.uuid(uuid);
-        w.string(name);
-        w.varint(props.len() as i32);
-        for p in props {
-            w.string(&p.name);
-            w.string(&p.value);
-            w.option(p.signature.as_deref(), |w, s| {
-                w.string(s);
-            });
-        }
-        if v >= 776 {
-            w.uuid(session_id);
-        }
-        if (766..768).contains(&v) {
-            w.bool(true); // strict error handling
-        }
-        Packet::new(ids::LOGIN_C_FINISHED, w.into_inner())
+    fn encode_encryption_request(&self, public_der: &[u8]) -> Packet {
+        Packet::new(ids::LOGIN_C_HELLO, login::encryption_request(self.client_version.protocol, public_der, &self.verify_token))
     }
 
     /// Velocity modern forwarding v1 payload, signed with the shared secret (what Pumpkin checks).
@@ -731,12 +722,24 @@ impl Connection {
         }
         self.client_out.seal(&mut bytes);
         out.push(Action::SendClient(bytes));
+        // what the chain answered on the client's behalf (known packs, cookies, and the whole
+        // configuration phase for clients that have none)
+        let replies = self.chain.as_mut().map(Chain::take_replies).unwrap_or_default();
+        if !replies.is_empty() {
+            self.send_backend_packets(replies, out);
+        }
         Ok(())
     }
 
     fn relay_serverbound(&mut self, id: i32, payload: Vec<u8>, out: &mut Vec<Action>) -> Result<(), String> {
         let pkt = Packet::new(id, payload);
         let translated = self.translate_serverbound(pkt)?;
+        self.send_backend_packets(translated, out);
+        Ok(())
+    }
+
+    /// Backend-version packets to Pumpkin, following the client side's state changes.
+    fn send_backend_packets(&mut self, translated: Vec<Packet>, out: &mut Vec<Action>) {
         let mut bytes = Vec::new();
         for p in translated {
             // State changes are tracked on the backend (26.3) ids after translation.
@@ -754,7 +757,6 @@ impl Connection {
             self.backend_out.frame(&p.encode(), &mut bytes);
         }
         out.push(Action::SendBackend(bytes));
-        Ok(())
     }
 
     pub fn describe(&self) -> String {
@@ -785,3 +787,4 @@ fn debug_log(out: &mut Vec<Action>, msg: impl FnOnce() -> String) {
         out.push(Action::Log(format!("{} {}", color::dim("debug:"), msg())));
     }
 }
+

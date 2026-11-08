@@ -252,6 +252,25 @@ fn write_payload(w: &mut Writer, tag: &Tag) {
     }
 }
 
+/// Writes NBT the way 1.20.1 and older send it on the network: the root carries a name (empty).
+pub fn write_named(w: &mut Writer, tag: &Tag) {
+    w.u8(tag.type_id());
+    if !matches!(tag, Tag::End) {
+        w.u16(0);
+    }
+    write_payload(w, tag);
+}
+
+/// Reads 1.20.1-style NBT (named root); End tag = none.
+pub fn read_named_optional(r: &mut Reader) -> Result<Option<Tag>> {
+    let ty = r.u8()?;
+    if ty == 0 {
+        return Ok(None);
+    }
+    read_string(r)?;
+    read_payload(r, ty, 0).map(Some)
+}
+
 /// Skips over one network NBT value without building it.
 pub fn skip(r: &mut Reader) -> Result<()> {
     read(r).map(|_| ())
@@ -271,5 +290,23 @@ mod tests {
         write(&mut w, &tag);
         let back = read(&mut Reader::new(&w.buf)).unwrap();
         assert_eq!(tag, back);
+    }
+
+    /// 1.20.1 NBT is the 1.20.2 form with an empty root name after the type byte.
+    #[test]
+    fn named_root() {
+        let tag = Tag::Compound(vec![("a".into(), Tag::Int(5))]);
+        let mut nameless = Writer::new();
+        write(&mut nameless, &tag);
+        let mut named = Writer::new();
+        write_named(&mut named, &tag);
+        assert_eq!(named.buf[..3], [10, 0, 0]);
+        assert_eq!(named.buf[3..], nameless.buf[1..]);
+        assert_eq!(read_named_optional(&mut Reader::new(&named.buf)).unwrap(), Some(tag));
+        // "no tag" is a lone End byte either way
+        let mut end = Writer::new();
+        write_named(&mut end, &Tag::End);
+        assert_eq!(end.buf, [0]);
+        assert_eq!(read_named_optional(&mut Reader::new(&[0])).unwrap(), None);
     }
 }
