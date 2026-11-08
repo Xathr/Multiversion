@@ -244,7 +244,10 @@ impl Entities {
 
     pub fn login(&mut self, payload: &[u8]) -> Result<()> {
         let mut r = Reader::new(payload);
-        r.i32()?;
+        // The client's own player is never spawned with ADD_ENTITY, so its player-only entity
+        // data (shoulder parrots, moved indexes) would go untranslated without this.
+        let own = r.i32()?;
+        self.types.insert(own, entity_id("player"));
         r.bool()?;
         r.list(|r| r.string().map(|_| ()))?;
         for _ in 0..3 {
@@ -508,6 +511,37 @@ mod tests {
         e.remove_entities(&rm.buf, &mut out).unwrap();
         assert_eq!(out.len(), 2);
         assert_eq!(out[1].0, ids::old::PLAYER_INFO_REMOVE);
+    }
+
+    #[test]
+    fn own_player_from_login_gets_player_conversions() {
+        let items = Items::new(Dir::ToClient);
+        let misc = Misc::new();
+        let mut e = Entities::default();
+        // minimal 1.21.9 login: entity id 7, hardcore, no dimensions, 3 varints, 3 bytes, dimension
+        let mut l = Writer::new();
+        l.i32(7);
+        l.bool(false);
+        l.varint(0);
+        l.varint(20);
+        l.varint(10);
+        l.varint(10);
+        l.raw(&[0, 1, 0]);
+        l.varint(0);
+        e.login(&l.buf).unwrap();
+        let mut p = Writer::new();
+        p.varint(7);
+        p.u8(19); // left shoulder: empty
+        p.varint(ty::OPT_VARINT);
+        p.varint(0);
+        p.u8(0xff);
+        let out = e.set_entity_data(&items, &misc, &p.buf).unwrap();
+        let mut r = Reader::new(&out);
+        assert_eq!(r.varint().unwrap(), 7);
+        assert_eq!((r.u8().unwrap(), r.varint().unwrap()), (19, ty::OLD_COMPOUND_TAG));
+        let tag = nbt::read(&mut r).unwrap();
+        assert!(tag.get("id").is_none(), "empty shoulder is an empty compound");
+        assert_eq!(r.u8().unwrap(), 0xff);
     }
 
     #[test]
