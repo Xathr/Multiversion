@@ -366,11 +366,52 @@ impl World {
                 }
                 tag.insert("biomes", Tag::List(Vec::new()));
             }
+            // Sounds added in 1.21.5 would make the old client fail to load the registry.
+            "jukebox_song" | "instrument" => fix_sound(tag, "sound_event"),
+            "worldgen/biome" => {
+                if let Some(effects) = tag.get_mut("effects") {
+                    for field in ["mood_sound", "additions_sound"] {
+                        if let Some(t) = effects.get_mut(field) {
+                            fix_sound(t, "sound");
+                        }
+                    }
+                    fix_sound(effects, "ambient_sound");
+                    match effects.get_mut("music") {
+                        Some(Tag::List(list)) => {
+                            for m in list.iter_mut() {
+                                if let Some(data) = m.get_mut("data") {
+                                    fix_sound(data, "sound");
+                                }
+                            }
+                        }
+                        Some(music @ Tag::Compound(_)) => fix_sound(music, "sound"),
+                        _ => {}
+                    }
+                }
+            }
             _ => {}
         }
         for field in ["description", "title", "author"] {
             if let Some(t) = tag.get_mut(field) {
                 text::downgrade(t);
+            }
+        }
+    }
+}
+
+/// Replaces a sound reference the old client lacks with an inline, silent sound event.
+fn fix_sound(parent: &mut Tag, field: &str) {
+    let known = |id: &str| d::OLD_SOUND_NAMES.contains(&id.strip_prefix("minecraft:").unwrap_or(id));
+    if matches!(parent.get(field), Some(Tag::String(id)) if !known(id)) {
+        let mut t = Tag::compound();
+        t.insert("sound_id", Tag::String("minecraft:intentionally_empty".into()));
+        parent.insert(field, t);
+        return;
+    }
+    if let Some(sound @ Tag::Compound(_)) = parent.get_mut(field) {
+        if let Some(Tag::String(id)) = sound.get_mut("sound_id") {
+            if !known(id) {
+                *id = "minecraft:intentionally_empty".into();
             }
         }
     }

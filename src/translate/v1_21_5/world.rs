@@ -7,6 +7,7 @@
 use super::super::data_1_21_5 as d;
 use super::items::{copy_nbt, err, Items};
 use crate::proto::buf::{Reader, Result, Writer};
+use crate::proto::nbt::{self, Tag};
 
 const BLOCKS_PER_SECTION: usize = 4096;
 const BIOMES_PER_SECTION: usize = 64;
@@ -241,14 +242,78 @@ impl World {
     /// REGISTRY_DATA: `None` when the whole registry must be dropped for the old client.
     pub fn registry_data(payload: &[u8]) -> Result<Option<Vec<u8>>> {
         let mut r = Reader::new(payload);
-        let registry = r.string()?;
-        let key = registry.strip_prefix("minecraft:").unwrap_or(registry);
-        if REMOVED_REGISTRIES.contains(&key) {
+        let registry = r.string()?.to_string();
+        let key = registry.strip_prefix("minecraft:").unwrap_or(&registry).to_string();
+        if REMOVED_REGISTRIES.contains(&key.as_str()) {
             return Ok(None);
         }
         // Entries are identical apart from new optional fields (e.g. cloud_height) that the old
-        // client's codecs ignore.
-        Ok(Some(payload.to_vec()))
+        // client's codecs ignore, and sounds added in 1.21.6 (e.g. the Tears disc), which would
+        // make the old client fail to load the registry.
+        if !matches!(key.as_str(), "jukebox_song" | "worldgen/biome" | "instrument") {
+            return Ok(Some(payload.to_vec()));
+        }
+        let mut w = Writer::with_capacity(payload.len());
+        w.string(&registry);
+        let n = r.varint()?;
+        w.varint(n);
+        for _ in 0..n.max(0) {
+            let entry = r.string()?;
+            w.string(entry);
+            let present = r.bool()?;
+            w.bool(present);
+            if present {
+                let mut tag = nbt::read(&mut r)?;
+                match key.as_str() {
+                    "jukebox_song" | "instrument" => fix_sound(&mut tag, "sound_event"),
+                    _ => {
+                        if let Some(effects) = tag.get_mut("effects") {
+                            for field in ["mood_sound", "additions_sound"] {
+                                if let Some(t) = effects.get_mut(field) {
+                                    fix_sound(t, "sound");
+                                }
+                            }
+                            fix_sound(effects, "ambient_sound");
+                            match effects.get_mut("music") {
+                                Some(Tag::List(list)) => {
+                                    for m in list.iter_mut() {
+                                        if let Some(data) = m.get_mut("data") {
+                                            fix_sound(data, "sound");
+                                        }
+                                    }
+                                }
+                                Some(music @ Tag::Compound(_)) => fix_sound(music, "sound"),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                nbt::write(&mut w, &tag);
+            }
+        }
+        Ok(Some(w.into_inner()))
+    }
+}
+
+/// Sound references the old client lacks would fail registry loading: replace them with an
+/// inline, silent sound event.
+fn fix_sound(parent: &mut Tag, field: &str) {
+    let known = |id: &str| d::OLD_SOUND_NAMES.contains(&id.strip_prefix("minecraft:").unwrap_or(id));
+    let silent = || {
+        let mut t = Tag::compound();
+        t.insert("sound_id", Tag::String("minecraft:intentionally_empty".into()));
+        t
+    };
+    if matches!(parent.get(field), Some(Tag::String(id)) if !known(id)) {
+        parent.insert(field, silent());
+        return;
+    }
+    if let Some(sound @ Tag::Compound(_)) = parent.get_mut(field) {
+        if let Some(Tag::String(id)) = sound.get_mut("sound_id") {
+            if !known(id) {
+                *id = "minecraft:intentionally_empty".into();
+            }
+        }
     }
 }
 
@@ -259,6 +324,38 @@ pub const REMOVED_REGISTRIES: &[&str] = &["dialog"];
 mod tests {
     use super::*;
     use super::super::items::Dir;
+
+    #[test]
+    fn unknown_jukebox_sound_becomes_silent() {
+        let mut tag = Tag::compound();
+        tag.insert("sound_event", Tag::String("minecraft:music_disc.tears".into()));
+        tag.insert("comparator_output", Tag::Int(10));
+        let mut p = Writer::new();
+        p.string("minecraft:jukebox_song");
+        p.varint(1);
+        p.string("minecraft:tears");
+        p.bool(true);
+        nbt::write(&mut p, &tag);
+        let out = World::registry_data(&p.buf).unwrap().unwrap();
+        let mut r = Reader::new(&out);
+        r.string().unwrap();
+        r.varint().unwrap();
+        r.string().unwrap();
+        assert!(r.bool().unwrap());
+        let t = nbt::read(&mut r).unwrap();
+        assert!(matches!(t.get("sound_event").and_then(|s| s.get("sound_id")), Some(Tag::String(id)) if id == "minecraft:intentionally_empty"));
+        // a sound 1.21.5 knows is left alone
+        let mut tag = Tag::compound();
+        tag.insert("sound_event", Tag::String("minecraft:music_disc.cat".into()));
+        let mut p = Writer::new();
+        p.string("minecraft:jukebox_song");
+        p.varint(1);
+        p.string("minecraft:cat");
+        p.bool(true);
+        nbt::write(&mut p, &tag);
+        let out = World::registry_data(&p.buf).unwrap().unwrap();
+        assert_eq!(out, p.buf);
+    }
 
     #[test]
     fn pack_unpack_roundtrip() {
