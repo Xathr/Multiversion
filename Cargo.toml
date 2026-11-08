@@ -1,12 +1,14 @@
 [package]
 name = "multiversion"
-version = "0.2.9"
+version = "0.2.10"
 edition = "2024"
 license = "GPL-3.0"
 description = "Pumpkin plugin: lets older and newer Minecraft Java clients join by translating their protocol inside the server process"
 publish = false
 
 [lib]
+# Capitalised so the build produces Multiversion.wasm.
+name = "Multiversion"
 crate-type = ["cdylib"]
 
 [dependencies]

@@ -6,6 +6,7 @@
 //! Velocity-style forwarding (signed with a shared secret). Game packets flow through a chain of
 //! translators between the client's version and Pumpkin's.
 
+#![allow(non_snake_case)] // the library is named Multiversion so the plugin file is Multiversion.wasm
 #![allow(clippy::too_many_lines)]
 
 pub mod banner;
@@ -120,7 +121,7 @@ pub mod log {
     }
     #[cfg(target_arch = "wasm32")]
     fn tagged(msg: &str) -> String {
-        format!("{} {msg}", crate::color::tag("[multiversion]"))
+        format!("{} {msg}", crate::color::tag("[Multiversion]"))
     }
     #[cfg(target_arch = "wasm32")]
     pub fn info(msg: &str) {

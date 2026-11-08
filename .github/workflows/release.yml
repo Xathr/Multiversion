@@ -37,13 +37,13 @@ jobs:
       - name: Test
         run: cargo test --release
 
-      - name: Build multiversion.wasm
+      - name: Build Multiversion.wasm
         run: ./build.sh
 
       - uses: actions/upload-artifact@v4
         with:
           name: multiversion
-          path: target/wasm32-wasip2/release/multiversion.wasm
+          path: target/wasm32-wasip2/release/Multiversion.wasm
           if-no-files-found: error
 
       - name: Publish the release
@@ -51,7 +51,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cd target/wasm32-wasip2/release && sha256sum multiversion.wasm > multiversion.wasm.sha256 && cd -
+          cd target/wasm32-wasip2/release && sha256sum Multiversion.wasm > Multiversion.wasm.sha256 && cd -
           # Changes since the previous release: one line per commit subject.
           prev=$(git tag --merged HEAD --sort=-v:refname | grep -vxF "$TAG" | head -1 || true)
           {
@@ -65,7 +65,7 @@ jobs:
             cat changes.md
             echo "## Install"
             echo
-            echo "Put \`multiversion.wasm\` in \`plugins/\` and restart. The Mineversed panel sets up \`pumpkin.toml\` for you; without it, copy \`plugins/data/multiversion/pumpkin-settings.txt\` into \`pumpkin.toml\`."
+            echo "Put \`Multiversion.wasm\` in \`plugins/\` and restart. The Mineversed panel sets up \`pumpkin.toml\` for you; without it, copy \`plugins/data/multiversion/pumpkin-settings.txt\` into \`pumpkin.toml\`."
           } > release-notes.md
-          gh release create "$TAG" --target "$GITHUB_SHA" target/wasm32-wasip2/release/multiversion.wasm target/wasm32-wasip2/release/multiversion.wasm.sha256 \
+          gh release create "$TAG" --target "$GITHUB_SHA" target/wasm32-wasip2/release/Multiversion.wasm target/wasm32-wasip2/release/Multiversion.wasm.sha256 \
             --title "multiversion $TAG" --notes-file release-notes.md

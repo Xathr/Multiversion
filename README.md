@@ -2,7 +2,7 @@
 
 <img src="market/logo.png" width="96" align="right" alt="Multiversion logo">
 
-`multiversion.wasm` is a Pumpkin plugin. Once installed, players on other Minecraft Java versions
+`Multiversion.wasm` is a Pumpkin plugin. Once installed, players on other Minecraft Java versions
 can join your 26.3 server: the plugin speaks their protocol version and translates every packet to
 and from Pumpkin's. It needs no Java, no separate proxy process and no extra port to open. Everything
 runs inside the server, as a WebAssembly plugin, configured by one `config.toml`.
@@ -58,7 +58,7 @@ player (26.2) ──► plugin listener :25565 ──► translator chain ──
 
 Requirements: a Pumpkin 26.3 server (built from commit `d1190dc`, plugin API v0.1). Nothing else: no Java, no proxy, no extra process.
 
-1. Copy `multiversion.wasm` (from the [latest release](https://github.com/jayclrk358/Multiversion/releases/latest), or built with `build.sh`) into your server's `plugins/` folder.
+1. Copy `Multiversion.wasm` (from the [latest release](https://github.com/jayclrk358/Multiversion/releases/latest), or built with `build.sh`) into your server's `plugins/` folder.
 2. Start the server once. The plugin writes `plugins/data/multiversion/config.toml` with a
    fresh forwarding secret, and `pumpkin-settings.txt` next to it with the three `pumpkin.toml`
    settings it needs (Pumpkin only lets plugins write their own data folder, so this edit is the
@@ -87,7 +87,7 @@ Bedrock players connect to Pumpkin directly on its Bedrock port, not through thi
 plugin still logs them like Java players, with their Bedrock version and device:
 
 ```
-[multiversion] Steve [203.0.113.7:51234] (Bedrock 1.26.60, Android) uuid 0000... joined (native Bedrock connection)
+[Multiversion] Steve [203.0.113.7:51234] (Bedrock 1.26.60, Android) uuid 0000... joined (native Bedrock connection)
 ```
 
 ## Configuration (`plugins/data/multiversion/config.toml`)
