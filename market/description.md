@@ -2,7 +2,7 @@
 
 **Multiversion** lets players on **Minecraft Java 1.20 through 26.3** join your Pumpkin server. Your friends no longer have to update, downgrade or install anything. It runs entirely inside the server as a WebAssembly plugin: **no proxy, no Java, no second process, no extra port.**
 
-![Supported versions](https://raw.githubusercontent.com/jayclrk358/Multiversion/main/market/screenshot-versions.png)
+![Supported versions](https://raw.githubusercontent.com/Xathr/Multiversion/main/market/screenshot-versions.png)
 
 ## Supported versions
 
@@ -28,12 +28,12 @@
 - ⚡ **Light on the CPU**: server-list pings are answered from a one-second cache, and Pumpkin's link to the plugin can skip compression
 - 🪶 **Self-contained**: one `.wasm` file (about 2.9 MB) and one config file
 
-![Console](https://raw.githubusercontent.com/jayclrk358/Multiversion/main/market/screenshot-console.png)
+![Console](https://raw.githubusercontent.com/Xathr/Multiversion/main/market/screenshot-console.png)
 
 ## Setup
 
 1. Put `Multiversion.wasm` in your server's `plugins/` folder and start the server once.
-2. The plugin writes `plugins/data/multiversion/pumpkin-settings.txt` with the settings `pumpkin.toml` needs: Pumpkin moves to a local port, forwarding is turned on with a generated secret, the plugin's permissions are pre-approved, and Pumpkin's local link to the plugin skips compression. Plugins can only write their own folder, so paste these in yourself, or use [Mineversed](https://github.com/jayclrk358/Mineversed), whose start scripts and web panel do it automatically.
+2. The plugin writes `plugins/data/multiversion/pumpkin-settings.txt` with the settings `pumpkin.toml` needs: Pumpkin moves to a local port, forwarding is turned on with a generated secret, the plugin's permissions are pre-approved, and Pumpkin's local link to the plugin skips compression. Plugins can only write their own folder, so this one step is yours: paste them in and restart.
 3. Restart. Players keep connecting to port 25565 as before. Keep port 25566 closed in your firewall.
 
 If a setting is missing, the plugin says exactly which one in the console.
@@ -54,7 +54,7 @@ deny = []       # e.g. ["1.21"]
 max_logins_per_ip = 5         # connections one address may have still logging in; 0 = no limit
 ```
 
-![Version filter](https://raw.githubusercontent.com/jayclrk358/Multiversion/main/market/screenshot-config.png)
+![Version filter](https://raw.githubusercontent.com/Xathr/Multiversion/main/market/screenshot-config.png)
 
 You can also change the public and backend ports, online mode, the server-list version text, the kick message, compression and connection limits.
 
