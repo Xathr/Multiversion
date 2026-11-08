@@ -27,7 +27,7 @@ pub fn warn(s: &str) -> String { paint("93", s) }
 /// Failures.
 pub fn bad(s: &str) -> String { paint("91", s) }
 /// The plugin's tag.
-pub fn tag(s: &str) -> String { paint("95", s) }
+pub fn tag(s: &str) -> String { paint("94", s) }
 
 #[cfg(test)]
 mod tests {

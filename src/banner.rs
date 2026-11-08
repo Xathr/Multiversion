@@ -35,9 +35,9 @@ pub fn lines(info: &Info) -> Vec<String> {
         Some((low, high)) => format!(
             "{} {}{}{} {}",
             color::version(low),
-            color::tag("◆"),
+            color::paint("95", "◆"),
             color::dim("━━━━━━━━━━"),
-            color::tag("◆"),
+            color::paint("95", "◆"),
             color::version(high)
         ),
         None => color::bad(info.range),
