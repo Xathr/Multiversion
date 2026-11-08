@@ -311,3 +311,74 @@ mod block_state_coverage {
         assert!(stone.is_empty(), "states shown as stone: {stone:?}");
     }
 }
+
+#[cfg(test)]
+mod creative_slot_items {
+    use super::*;
+    use crate::proto::buf::{Reader, Writer};
+
+    fn index(names: &[&str], name: &str) -> i32 {
+        names.iter().position(|n| *n == name).unwrap() as i32
+    }
+
+    /// A creative-inventory bundle with a rarity, holding a stone that also has a rarity: the
+    /// bundle's own components are length-prefixed from 1.21.5 on, the nested stone's never are.
+    fn creative_bundle(items: &[&str], comps: &[&str], prefixed: bool) -> Vec<u8> {
+        let mut rarity = Writer::new();
+        rarity.varint(2);
+        let mut stone = Writer::new();
+        stone.varint(1);
+        stone.varint(index(items, "stone"));
+        stone.varint(1);
+        stone.varint(0);
+        stone.varint(index(comps, "rarity"));
+        stone.raw(&rarity.buf);
+        let mut contents = Writer::new();
+        contents.varint(1);
+        contents.raw(&stone.buf);
+        let mut w = Writer::new();
+        w.i16(36);
+        w.varint(1);
+        w.varint(index(items, "bundle"));
+        w.varint(2);
+        w.varint(0);
+        for (name, value) in [("rarity", &rarity.buf), ("bundle_contents", &contents.buf)] {
+            w.varint(index(comps, name));
+            if prefixed {
+                w.varint(value.len() as i32);
+            }
+            w.raw(value);
+        }
+        w.into_inner()
+    }
+
+    /// Bundles and other items with components, picked in the creative inventory, reach the
+    /// server from every client version (1.21.9 clients and older used to be disconnected).
+    #[test]
+    fn creative_bundle_reaches_the_server_from_every_version() {
+        let cases: [(i32, i32, &[&str], &[&str]); 9] = [
+            (767, 0x32, &data_1_21::OLD_ITEM_NAMES, &data_1_21::OLD_COMPONENT_NAMES),
+            (768, 0x34, &data_1_21_2::OLD_ITEM_NAMES, &data_1_21_2::OLD_COMPONENT_NAMES),
+            (769, 0x36, &data_1_21_4::OLD_ITEM_NAMES, &data_1_21_4::OLD_COMPONENT_NAMES),
+            (770, 0x36, &data_1_21_5::OLD_ITEM_NAMES, &data_1_21_5::OLD_COMPONENT_NAMES),
+            (771, 0x37, &data_1_21_6::OLD_ITEM_NAMES, &data_1_21_6::OLD_COMPONENT_NAMES),
+            (772, 0x37, &data_1_21_7::OLD_ITEM_NAMES, &data_1_21_7::OLD_COMPONENT_NAMES),
+            (773, 0x37, &data_1_21_9::OLD_ITEM_NAMES, &data_1_21_9::OLD_COMPONENT_NAMES),
+            (774, 0x37, &data_1_21_11::OLD_ITEM_NAMES, &data_1_21_11::OLD_COMPONENT_NAMES),
+            (775, 0x38, &data_26_1::OLD_ITEM_NAMES, &data_26_1::OLD_COMPONENT_NAMES),
+        ];
+        for (protocol, id, items, comps) in cases {
+            let payload = creative_bundle(items, comps, protocol >= 770);
+            let mut chain = Chain::for_client(Version { protocol }).unwrap();
+            let out = chain
+                .serverbound(State::Play, Packet::new(id, payload))
+                .unwrap_or_else(|e| panic!("protocol {protocol}: {e}"));
+            assert_eq!(out.len(), 1, "protocol {protocol}");
+            let mut r = Reader::new(&out[0].payload);
+            assert_eq!(r.i16().unwrap(), 36, "protocol {protocol}");
+            assert_eq!(r.varint().unwrap(), 1, "protocol {protocol}: count");
+            r.varint().unwrap();
+            assert_eq!(r.varint().unwrap(), 2, "protocol {protocol}: both components arrive");
+        }
+    }
+}

@@ -42,11 +42,15 @@ pub struct Items {
     pub dir: Dir,
     /// Set while a nested parse wants its component count adjusted (unused here, kept for parity).
     extra_added: Cell<i32>,
+    /// Set by `length_prefixed_stack` for the next component patch only: in serverbound creative
+    /// slots (1.21.5+) the item's own components carry a byte length, but items nested inside
+    /// them (bundle or container contents) use the plain format.
+    prefixed: Cell<bool>,
 }
 
 impl Items {
     pub fn new(dir: Dir) -> Self {
-        Self { dir, extra_added: Cell::new(0) }
+        Self { dir, extra_added: Cell::new(0), prefixed: Cell::new(false) }
     }
 
     // ---- id remaps -------------------------------------------------------------------------
@@ -215,6 +219,20 @@ impl Items {
         w.varint(self.item(id));
         self.components(r, w)
     }
+    /// Serverbound creative slot stack: like `item_stack`, but the stack's own component values
+    /// each carry a varint byte length.
+    pub fn length_prefixed_stack(&self, r: &mut Reader, w: &mut Writer) -> Result<()> {
+        let count = Self::copy_varint(r, w)?;
+        if count <= 0 {
+            return Ok(());
+        }
+        let id = r.varint()?;
+        w.varint(self.item(id));
+        self.prefixed.set(true);
+        let res = self.components(r, w);
+        self.prefixed.set(false);
+        res
+    }
     pub fn item_stack_list(&self, r: &mut Reader, w: &mut Writer) -> Result<()> {
         let n = Self::copy_varint(r, w)?;
         for _ in 0..n.max(0) {
@@ -293,10 +311,13 @@ impl Items {
         if added < 0 || removed < 0 || added + removed > 512 {
             return Err(err("bad component counts"));
         }
+        // Only this patch is length-prefixed; nested patches read the plain format.
+        let prefixed = self.prefixed.replace(false);
         let mut body = Writer::new();
         let mut kept_added = 0;
         for _ in 0..added {
-            if self.component(r, &mut body)? {
+            let kept = if prefixed { self.prefixed_component(r, &mut body)? } else { self.component(r, &mut body)? };
+            if kept {
                 kept_added += 1;
             }
         }
@@ -331,6 +352,21 @@ impl Items {
             }
             None => Ok(false),
         }
+    }
+
+    /// `component` for a length-prefixed value: type id, byte length, value.
+    fn prefixed_component(&self, r: &mut Reader, w: &mut Writer) -> Result<bool> {
+        let ty = r.varint()?;
+        let len = usize::try_from(r.varint()?).map_err(|_| err("negative component length"))?;
+        let mut sub = Reader::new(r.bytes(len)?);
+        let name = self.source_component_name(ty).ok_or_else(|| err(&format!("unknown data component type {ty}")))?;
+        let mut value = Writer::new();
+        self.component_value(name, &mut sub, &mut value)?;
+        let Some(target) = self.component_type(ty) else { return Ok(false) };
+        w.varint(target);
+        w.varint(value.buf.len() as i32);
+        w.raw(&value.buf);
+        Ok(true)
     }
 
     /// Parses one component payload named `name`, writing the target form.

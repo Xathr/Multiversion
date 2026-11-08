@@ -321,17 +321,22 @@ impl Items {
         let ty = r.varint()?;
         let name = self.source_component_name(ty).ok_or_else(|| err(&format!("unknown data component type {ty}")))?;
         let mut value = Writer::new();
-        if self.length_prefixed.get() {
+        // Only the creative stack's own components are length-prefixed: items nested inside a
+        // value (bundle or container contents) use the plain format, so the flag is off meanwhile.
+        let prefixed = self.length_prefixed.replace(false);
+        let parsed = if prefixed {
             let len = r.varint()?;
             let slice = r.bytes(usize::try_from(len).map_err(|_| err("negative component length"))?)?;
             let mut sub = Reader::new(slice);
-            self.component_value(name, &mut sub, &mut value)?;
+            self.component_value(name, &mut sub, &mut value)
         } else {
-            self.component_value(name, r, &mut value)?;
-        }
+            self.component_value(name, r, &mut value)
+        };
+        self.length_prefixed.set(prefixed);
+        parsed?;
         let Some(target) = self.component_type(ty) else { return Ok(false) };
         w.varint(target);
-        if self.length_prefixed.get() {
+        if prefixed {
             w.varint(value.buf.len() as i32);
         }
         w.raw(&value.buf);

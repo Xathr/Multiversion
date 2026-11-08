@@ -56,7 +56,7 @@ player (26.2) ──► plugin listener :25565 ──► translator chain ──
 
 ## Install
 
-Requirements: a Pumpkin 26.3 server (built from commit `d1190dc`, plugin API v0.1). Nothing else: no Java, no proxy, no extra process.
+Requirements: a Pumpkin 26.3 server (Pumpkin 0.2.2, commit `eda6944`, plugin API v0.1). Nothing else: no Java, no proxy, no extra process.
 
 1. Copy `Multiversion.wasm` (from the [latest release](https://github.com/jayclrk358/Multiversion/releases/latest), or built with `build.sh`) into your server's `plugins/` folder.
 2. Start the server once. The plugin writes `plugins/data/multiversion/config.toml` with a
