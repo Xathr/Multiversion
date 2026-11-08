@@ -283,8 +283,9 @@ pub fn start(config: Config) -> Result<(), String> {
     if let Err(e) = reactor.listen(listen, 128) {
         if e.contains("address-in-use") || e.contains("AddressInUse") {
             return Err(format!(
-                "port {} is taken, most likely by Pumpkin itself. In pumpkin.toml set [networking.java] address = \"{}\" \
-                 (see plugins/data/multiversion/pumpkin-settings.txt) and restart.",
+                "port {} is taken, most likely by Pumpkin itself. Restart with Mineversed's start.sh, start.bat or panel, \
+                 which set pumpkin.toml up automatically, or set [networking.java] address = \"{}\" in pumpkin.toml \
+                 (all settings are in plugins/data/multiversion/pumpkin-settings.txt) and restart.",
                 listen.port(),
                 config.backend.address
             ));
