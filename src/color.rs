@@ -9,7 +9,8 @@ pub fn set_enabled(on: bool) {
     ENABLED.store(on, Ordering::Relaxed);
 }
 
-fn paint(code: &str, s: &str) -> String {
+/// Any ANSI colour code.
+pub fn paint(code: &str, s: &str) -> String {
     if ENABLED.load(Ordering::Relaxed) { format!("\x1b[{code}m{s}\x1b[0m") } else { s.to_string() }
 }
 

@@ -8,6 +8,7 @@
 
 #![allow(clippy::too_many_lines)]
 
+pub mod banner;
 pub mod color;
 pub mod config;
 pub mod crypto;
@@ -66,16 +67,21 @@ mod plugin {
             // it needs are written out ready to paste, and checked for at runtime.
             let snippet = crate::config::pumpkin_snippet(&config);
             let _ = std::fs::write(format!("{folder}/pumpkin-settings.txt"), &snippet);
-            crate::log::info(&format!(
-                "listening on {} for Minecraft {} clients, forwarding to Pumpkin at {}",
-                crate::color::dim(&config.listen.address),
-                crate::color::version(&crate::translate::allowed_range(&config.versions)),
-                crate::color::dim(&config.backend.address)
-            ));
+            let range = crate::translate::allowed_range(&config.versions);
+            let info = crate::banner::Info {
+                version: env!("CARGO_PKG_VERSION"),
+                range: &range,
+                listen: &config.listen.address,
+                backend: &config.backend.address,
+                online_mode: config.auth.online_mode,
+            };
+            for line in crate::banner::lines(&info) {
+                pumpkin_plugin_api::logging::log(pumpkin_plugin_api::logging::LogLevel::Info, &line);
+            }
             if config.backend.forwarding_secret.is_empty() {
                 crate::log::warn("backend.forwarding_secret is empty; Pumpkin will reject logins. Set it in config.toml and pumpkin.toml.");
             }
-            crate::log::info("if players can't join, apply plugins/data/multiversion/pumpkin-settings.txt to pumpkin.toml (three settings) and restart");
+            crate::log::info(&crate::color::dim("if players can't join, apply plugins/data/multiversion/pumpkin-settings.txt to pumpkin.toml (three settings) and restart"));
             *self.config.lock().unwrap() = Some(config.clone());
             // Bind now; then run the proxy loop in short slices, one per server tick, so Pumpkin
             // can still call our other hooks (and unload us on shutdown) in between.
