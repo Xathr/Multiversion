@@ -20,6 +20,38 @@ def apply_materials(name):
             return re.sub(rf"(^|_){mat}(_|$)", lambda m: m.group(1) + repl + m.group(2), name)
     return None
 
+def parse_state(name):
+    base, _, props = name.partition("[")
+    return base, dict(p.split("=", 1) for p in props.rstrip("]").split(",") if "=" in p)
+
+def best_state(base, want, need, old_index):
+    """The old state of `base` that has every `need` property and shares the most of `want`."""
+    best, score = None, -1
+    for n2, i2 in old_index.items():
+        b2, p2 = parse_state(n2)
+        if b2 != base or any(p2.get(k) != v for k, v in need.items()):
+            continue
+        sc = sum(1 for k, v in want.items() if p2.get(k) == v)
+        if sc > score:
+            best, score = i2, sc
+    return best
+
+def resolve_partial(name, old_index):
+    """Diff keys like "leaf_litter[segment_amount=1]" match every state with those properties;
+    the target's properties are set and the rest of the state's properties are kept where they fit."""
+    base, props = parse_state(name)
+    for k, v in D.get("blockstates", {}).items():
+        kb, kp = parse_state(k)
+        if kb != base or not kp or k == name or any(props.get(a) != b for a, b in kp.items()):
+            continue
+        tb, tp = parse_state(v)
+        want = {a: b for a, b in props.items() if a not in kp}
+        want.update(tp)
+        r = best_state(tb, want, tp, old_index)
+        if r is not None:
+            return r
+    return None
+
 def resolve_blockstate(name, old_index):
     base, _, props = name.partition("[")
     props = "[" + props if props else ""
@@ -27,6 +59,10 @@ def resolve_blockstate(name, old_index):
     candidates = []
     if name in diff:
         candidates.append(diff[name])
+    else:
+        r = resolve_partial(name, old_index)
+        if r is not None:
+            return r
     for k, v in diff.items():
         if k == base or k == base + "[":
             # "foo[" means: take foo and keep our properties; "foo" means: that exact state

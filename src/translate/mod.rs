@@ -178,3 +178,135 @@ pub fn allowed_range(cfg: &crate::config::Versions) -> String {
     }
     runs.iter().map(|(lo, hi)| if lo == hi { lo.name() } else { format!("{}-{}", lo.name(), hi.name()) }).collect::<Vec<_>>().join(", ")
 }
+
+#[cfg(test)]
+mod chain_tests {
+    use super::*;
+    use crate::proto::buf::{Reader, Writer};
+
+    /// A 26.3 block update for pink petals, through every step down to 1.21.4.
+    #[test]
+    fn pink_petals_block_update_reaches_1_21_4() {
+        let mut chain = Chain::for_client(Version { protocol: 769 }).unwrap();
+        let mut w = Writer::new();
+        w.i64(0); // position
+        w.varint(33664); // pink_petals[facing=north,flower_amount=1] in 26.3
+        let out = chain.clientbound(State::Play, Packet::new(v26_2::ids::new::BLOCK_UPDATE, w.into_inner())).unwrap();
+        assert_eq!(out.len(), 1);
+        let mut r = Reader::new(&out[0].payload);
+        r.i64().unwrap();
+        assert_eq!(r.varint().unwrap(), 25840, "1.21.4 pink_petals[facing=north,flower_amount=1]");
+    }
+
+    fn pack(values: &[u32], bits: u32) -> Vec<i64> {
+        let per = 64 / bits as usize;
+        values.chunks(per).map(|c| c.iter().enumerate().fold(0u64, |v, (i, x)| v | (u64::from(*x) << (i as u32 * bits))) as i64).collect()
+    }
+    fn unpack(longs: &[i64], bits: u32, n: usize) -> Vec<u32> {
+        let per = 64 / bits as usize;
+        let mask = (1u64 << bits) - 1;
+        (0..n).map(|i| ((longs[i / per] as u64 >> ((i % per) as u32 * bits)) & mask) as u32).collect()
+    }
+
+    /// A 26.3 chunk with one section of air and pink petals, through every step to 1.21.4.
+    fn chunk_to_1_21_4(direct: bool) -> Vec<u32> {
+        let mut values = vec![0u32; 4096];
+        values[0] = 33664; // pink petals
+        let mut sec = Writer::new();
+        sec.i16(1); // non-air
+        sec.i16(0); // fluids (26.1+)
+        if direct {
+            sec.u8(16);
+            for l in pack(&values, 16) { sec.i64(l); }
+        } else {
+            sec.u8(4);
+            sec.varint(2);
+            sec.varint(0);
+            sec.varint(33664);
+            let idx: Vec<u32> = values.iter().map(|v| u32::from(*v != 0)).collect();
+            for l in pack(&idx, 4) { sec.i64(l); }
+        }
+        sec.u8(0); // biomes: single value
+        sec.varint(0);
+        let mut w = Writer::new();
+        w.i32(0);
+        w.i32(0);
+        w.varint(0); // heightmaps
+        w.byte_array(&sec.buf);
+        w.varint(0); // block entities
+        for _ in 0..4 { w.varint(0); } // light masks
+        w.varint(0);
+        w.varint(0);
+        let mut chain = Chain::for_client(Version { protocol: 769 }).unwrap();
+        let out = chain.clientbound(State::Play, Packet::new(v26_2::ids::new::LEVEL_CHUNK_WITH_LIGHT, w.into_inner())).unwrap();
+        let mut r = Reader::new(&out[0].payload);
+        r.i32().unwrap();
+        r.i32().unwrap();
+        // 1.21.4 heightmaps: NBT compound
+        crate::proto::nbt::read(&mut r).unwrap();
+        let data = r.byte_array().unwrap().to_vec();
+        let mut s = Reader::new(&data);
+        s.i16().unwrap();
+        let bits = u32::from(s.u8().unwrap());
+        if bits == 0 {
+            let v = s.varint().unwrap() as u32;
+            return vec![v; 4096];
+        }
+        let palette: Vec<u32> = if bits <= 8 { (0..s.varint().unwrap()).map(|_| s.varint().unwrap() as u32).collect() } else { Vec::new() };
+        let n = s.varint().unwrap() as usize; // 1.21.4 long array length
+        let longs: Vec<i64> = (0..n).map(|_| s.i64().unwrap()).collect();
+        let raw = unpack(&longs, bits.max(4), 4096);
+        if palette.is_empty() { raw } else { raw.iter().map(|i| palette[*i as usize]).collect() }
+    }
+
+    #[test]
+    fn pink_petals_section_update_reaches_1_21_4() {
+        let mut chain = Chain::for_client(Version { protocol: 769 }).unwrap();
+        let mut w = Writer::new();
+        w.i64(0); // section position
+        w.varint(1);
+        w.varlong((33664i64 << 12) | 5);
+        let out = chain.clientbound(State::Play, Packet::new(v26_2::ids::new::SECTION_BLOCKS_UPDATE, w.into_inner())).unwrap();
+        let mut r = Reader::new(&out[0].payload);
+        r.i64().unwrap();
+        assert_eq!(r.varint().unwrap(), 1);
+        assert_eq!(r.varlong().unwrap() >> 12, 25840);
+    }
+
+    #[test]
+    fn pink_petals_in_chunk_palette_reach_1_21_4() {
+        let v = chunk_to_1_21_4(false);
+        assert_eq!((v[0], v[1]), (25840, 0));
+    }
+
+    #[test]
+    fn pink_petals_in_chunk_direct_reach_1_21_4() {
+        let v = chunk_to_1_21_4(true);
+        assert_eq!((v[0], v[1]), (25840, 0));
+    }
+}
+
+#[cfg(test)]
+mod block_state_coverage {
+    use super::*;
+    use crate::proto::buf::{Reader, Writer};
+
+    /// No 26.3 block state should fall back to stone on the oldest client (e.g. leaf litter).
+    #[test]
+    fn no_state_falls_back_to_stone_on_1_21() {
+        let mut stone = Vec::new();
+        for s in 2..35723 {
+            let mut chain = Chain::for_client(Version { protocol: 767 }).unwrap();
+            let mut w = Writer::new();
+            w.i64(0);
+            w.varint(s);
+            let out = chain.clientbound(State::Play, Packet::new(v26_2::ids::new::BLOCK_UPDATE, w.into_inner())).unwrap();
+            let mut r = Reader::new(&out[0].payload);
+            r.i64().unwrap();
+            if r.varint().unwrap() == 1 {
+                stone.push(s);
+            }
+        }
+        assert!(stone.is_empty(), "states shown as stone: {stone:?}");
+    }
+}
