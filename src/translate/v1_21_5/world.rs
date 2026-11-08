@@ -18,7 +18,7 @@ fn bits_for(count: u32) -> u32 {
 
 /// Unpacks a vanilla "no values span longs" compact array.
 fn unpack(longs: &[i64], bits: u32, count: usize) -> Vec<u32> {
-    let per_long = 64 / bits as usize;
+    let per_long = 64 / (bits as usize).clamp(1, 64);
     let mask = (1u64 << bits) - 1;
     let mut out = Vec::with_capacity(count);
     'outer: for l in longs {
@@ -35,7 +35,7 @@ fn unpack(longs: &[i64], bits: u32, count: usize) -> Vec<u32> {
 }
 
 fn pack(values: &[u32], bits: u32) -> Vec<i64> {
-    let per_long = 64 / bits as usize;
+    let per_long = 64 / (bits as usize).clamp(1, 64);
     let mut out = Vec::with_capacity(values.len().div_ceil(per_long));
     for chunk in values.chunks(per_long) {
         let mut v: u64 = 0;
@@ -52,7 +52,7 @@ fn packed_len(bits: u32, count: usize) -> usize {
     if bits == 0 {
         return 0;
     }
-    count.div_ceil(64 / bits as usize)
+    count.div_ceil(64 / (bits as usize).clamp(1, 64))
 }
 
 fn copy_longs(r: &mut Reader, w: &mut Writer, n: usize) -> Result<()> {
