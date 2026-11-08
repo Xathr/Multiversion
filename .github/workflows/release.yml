@@ -52,27 +52,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd target/wasm32-wasip2/release && sha256sum multiversion.wasm > multiversion.wasm.sha256 && cd -
-          # What changed since the previous release, from the commit messages (subjects, plus
-          # their "- " bullet lines). Lines mentioning tooling vendors are left out.
+          # Changes since the previous release: one line per commit subject.
           prev=$(git tag --merged HEAD --sort=-v:refname | grep -vxF "$TAG" | head -1 || true)
-          range="${prev:+$prev..}HEAD"
           {
-            if [ -n "$prev" ]; then echo "## What's changed since $prev"; else echo "## What's in this release"; fi
+            echo "## Changes${prev:+ since $prev}"
             echo
-            git log "$range" --no-merges --format='@@%s%n%b' | awk '
-              function flush() { if (cur != "") print cur; cur = "" }
-              /^@@/ { flush(); print "- " substr($0, 3); next }
-              /^- / { flush(); cur = "  " $0; next }
-              /^  [^ ]/ && cur != "" { sub(/^  /, ""); cur = cur " " $0; next }
-              { flush() }
-              END { flush() }' | grep -viE 'claude|anthropic|co-authored-by|^ *$' || echo "- Maintenance release."
+            git log "${prev:+$prev..}HEAD" --no-merges --format='- %s' | grep -viE 'claude|anthropic' || echo "- Minor fixes"
             echo
           } > changes.md
           {
             cat changes.md
             echo "## Install"
             echo
-            echo "Drop \`multiversion.wasm\` into your Pumpkin server's \`plugins/\` folder and restart. With the Mineversed web panel, \`pumpkin.toml\` is set up for it automatically; otherwise apply \`plugins/data/multiversion/pumpkin-settings.txt\` to \`pumpkin.toml\` and restart again. See the README."
+            echo "Put \`multiversion.wasm\` in \`plugins/\` and restart. The Mineversed panel sets up \`pumpkin.toml\` for you; without it, copy \`plugins/data/multiversion/pumpkin-settings.txt\` into \`pumpkin.toml\`."
           } > release-notes.md
           gh release create "$TAG" --target "$GITHUB_SHA" target/wasm32-wasip2/release/multiversion.wasm target/wasm32-wasip2/release/multiversion.wasm.sha256 \
             --title "multiversion $TAG" --notes-file release-notes.md
