@@ -76,7 +76,7 @@ mod plugin {
                 online_mode: config.auth.online_mode,
             };
             for line in crate::banner::lines(&info) {
-                pumpkin_plugin_api::logging::log(pumpkin_plugin_api::logging::LogLevel::Info, &line);
+                crate::log::info(&line);
             }
             if config.backend.forwarding_secret.is_empty() {
                 crate::log::warn("backend.forwarding_secret is empty; Pumpkin will reject logins. Set it in config.toml and pumpkin.toml.");
