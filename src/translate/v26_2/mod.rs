@@ -38,6 +38,37 @@ impl V26_3To26_2 {
         }
     }
 
+    /// For a client on 26.3, which gets Pumpkin's packets untranslated: returns the packet's
+    /// payload with the item lists a client would reject put right, or `None` if it is fine as
+    /// it is (nearly always). Only packets that carry items are looked at.
+    pub fn repair_native(&mut self, pkt: &Packet) -> Option<Vec<u8>> {
+        let carries_items = matches!(
+            pkt.id,
+            new::CONTAINER_SET_CONTENT | new::CONTAINER_SET_SLOT | new::SET_CURSOR_ITEM | new::SET_PLAYER_INVENTORY | new::SET_EQUIPMENT | new::SET_ENTITY_DATA | new::MERCHANT_OFFERS
+        );
+        // Entity data is read by entity type, so follow which entities exist.
+        let tracks_entities = matches!(pkt.id, new::ADD_ENTITY | new::REMOVE_ENTITIES | new::LOGIN | new::RESPAWN);
+        if !carries_items && !tracks_entities {
+            return None;
+        }
+        let mut payload: Option<Vec<u8>> = None;
+        // An item inside a repaired list can need repair itself (a crossbow in a bundle): go
+        // round again until nothing is left to correct.
+        for _ in 0..4 {
+            let current = Packet::new(pkt.id, payload.clone().unwrap_or_else(|| pkt.payload.clone()));
+            self.to_client.take_repairs();
+            // Only the corrections are wanted; the 26.2 packet this produces is thrown away, and
+            // a packet this step cannot read is left for the client to judge.
+            let _ = self.play_clientbound(&current, &mut Vec::new());
+            let repairs = self.to_client.take_repairs();
+            if !carries_items || repairs.is_empty() {
+                break;
+            }
+            payload = Some(apply_repairs(&current.payload, repairs)?);
+        }
+        payload
+    }
+
     fn play_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
         let items = &self.to_client;
         let p = &pkt.payload[..];
@@ -231,6 +262,29 @@ impl Translator for V26_3To26_2 {
             }
         }
     }
+}
+
+/// `payload` with each repair's stretch replaced. Repairs inside another repair's stretch are
+/// left for the next round. `None` if a repair does not point into `payload`.
+fn apply_repairs(payload: &[u8], mut repairs: Vec<items::Repair>) -> Option<Vec<u8>> {
+    let base = payload.as_ptr() as usize;
+    repairs.sort_by_key(|r| (r.start, std::cmp::Reverse(r.end)));
+    let mut out = Vec::with_capacity(payload.len());
+    let mut done = 0;
+    for r in repairs {
+        let (start, end) = (r.start.checked_sub(base)?, r.end.checked_sub(base)?);
+        if end > payload.len() || start > end {
+            return None;
+        }
+        if start < done {
+            continue; // inside the one just replaced
+        }
+        out.extend_from_slice(&payload[done..start]);
+        out.extend_from_slice(&r.with);
+        done = end;
+    }
+    out.extend_from_slice(&payload[done..]);
+    Some(out)
 }
 
 #[allow(dead_code)]

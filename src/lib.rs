@@ -54,17 +54,33 @@ mod plugin {
     struct UpdateCommand(Option<Job>);
     impl CommandHandler for UpdateCommand {
         fn handle(&self, sender: CommandSender, _server: Server, _args: ConsumedArgs) -> Result<i32, CommandError> {
-            let say = |line: &str| {
-                // The console shows colours and gets the plugin's tag; chat gets plain text.
-                let text = if sender.is_console() { format!("{} {line}", crate::color::tag("[Multiversion]")) } else { crate::color::strip(line) };
-                sender.send_message(TextComponent::text(&text));
+            let console = sender.is_console();
+            // The console gets ANSI colours (if they are on) and the plugin's tag; chat gets the
+            // same colours as chat colours.
+            let send = |line: &str| {
+                if console {
+                    sender.send_message(TextComponent::text(&format!("{} {line}", crate::color::tag("[Multiversion]"))));
+                } else {
+                    match TextComponent::from_json(&crate::color::chat_json(line)) {
+                        Ok(component) => sender.send_message(component),
+                        Err(_) => sender.send_message(TextComponent::text(&crate::color::strip(line))),
+                    }
+                }
             };
+            // Builds a line with colours on for chat, whatever console_colors says.
+            let coloured = |f: &dyn Fn() -> String| if console { f() } else { crate::color::with_colours(f) };
+            let say = |line: &str| send(&coloured(&|| crate::color::dim(line)));
             match self.0 {
                 None => {
-                    for line in updater::lines(&updater::status()) {
-                        say(&line);
+                    let lines = if console { updater::lines(&updater::status()) } else { crate::color::with_colours(|| updater::lines(&updater::status())) };
+                    for line in lines {
+                        send(&line);
                     }
-                    say(&crate::color::dim("commands: /multiversion update check, /multiversion update download"));
+                    if console {
+                        say("commands: /multiversion update check, /multiversion update download");
+                    } else if let Ok(buttons) = TextComponent::from_json(&update_buttons()) {
+                        sender.send_message(buttons);
+                    }
                 }
                 // The proxy runs the request between packets, so players never wait on the Market.
                 Some(job) => {
@@ -79,6 +95,21 @@ mod plugin {
             }
             Ok(1)
         }
+    }
+
+    /// Clickable [Check now] and [Download] for chat.
+    fn update_buttons() -> String {
+        let button = |label: &str, command: &str, hover: &str| {
+            serde_json::json!({ "text": format!("[{label}]"), "color": "aqua",
+                "click_event": { "action": "run_command", "command": command },
+                "hover_event": { "action": "show_text", "value": [{ "text": format!("{hover}\nClick to run {command}"), "color": "gray" }] } })
+        };
+        serde_json::json!({ "text": "", "extra": [
+            button("Check now", "/multiversion update check", "Ask the Pumpkin Market for the latest version"),
+            { "text": " ", "color": "gray" },
+            button("Download", "/multiversion update download", "Save the Market's signed Multiversion.wasm in the data folder"),
+        ]})
+        .to_string()
     }
 
     /// Tells operators about a newer version shortly after they join.

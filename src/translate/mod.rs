@@ -753,6 +753,40 @@ mod loaded_crossbow {
     use super::*;
     use crate::proto::buf::{Reader, Writer};
 
+    /// A 26.3 client is sent Pumpkin's packets as they are, so the same correction is made in
+    /// the 26.3 bytes: everything else in the packet is untouched.
+    fn native_client_gets_an_arrow_too(packet: &Packet) {
+        let (items, comps) = (&data_26_2::NEW_ITEM_NAMES, &data_26_2::NEW_COMPONENT_NAMES);
+        let mut step = v26_2::V26_3To26_2::new();
+        let fixed = step.repair_native(packet).expect("the empty projectile is corrected");
+        let mut want = Writer::new();
+        want.varint(0).varint(5).i16(36).varint(1).varint(idx(items, "crossbow")).varint(1).varint(0);
+        want.varint(idx(comps, "charged_projectiles")).varint(1);
+        want.varint(idx(items, "arrow")).varint(1).varint(0).varint(0);
+        assert_eq!(fixed, want.buf);
+        // The corrected packet needs nothing more, and neither does an ordinary item.
+        assert!(step.repair_native(&Packet::new(packet.id, fixed)).is_none());
+        let mut plain = Writer::new();
+        plain.varint(0).varint(5).i16(36).varint(3).varint(idx(items, "arrow")).varint(0).varint(0);
+        assert!(step.repair_native(&Packet::new(packet.id, plain.into_inner())).is_none());
+        // Other players see the crossbow through the equipment packet.
+        let mut eq = Writer::new();
+        eq.varint(77).i8(0).varint(1).varint(idx(items, "crossbow")).varint(1).varint(0);
+        eq.varint(idx(comps, "charged_projectiles")).varint(2);
+        for _ in 0..8 {
+            eq.varint(0);
+        }
+        let fixed = step.repair_native(&Packet::new(v26_2::ids::new::SET_EQUIPMENT, eq.into_inner())).expect("equipment is corrected");
+        let mut r = Reader::new(&fixed);
+        assert_eq!((r.varint().unwrap(), r.i8().unwrap()), (77, 0));
+        for want in [1, idx(items, "crossbow"), 1, 0, idx(comps, "charged_projectiles"), 1, idx(items, "arrow"), 1, 0, 0] {
+            assert_eq!(r.varint().unwrap(), want);
+        }
+        assert!(r.is_empty());
+        // Packets without items are not looked at.
+        assert!(step.repair_native(&Packet::new(v26_2::ids::new::LEVEL_CHUNK_WITH_LIGHT, vec![1, 2, 3])).is_none());
+    }
+
     fn idx(names: &[&str], n: &str) -> i32 {
         names.iter().position(|x| *x == n).unwrap() as i32
     }
@@ -777,7 +811,10 @@ mod loaded_crossbow {
             w.varint(0); // id, count, added, removed: what Pumpkin sends
         }
         let packet = Packet::new(v26_2::ids::new::CONTAINER_SET_SLOT, w.into_inner());
+        native_client_gets_an_arrow_too(&packet);
         for (protocol, old_items, old_comps) in [
+            (776, &data_26_2::OLD_ITEM_NAMES[..], &data_26_2::OLD_COMPONENT_NAMES[..]),
+            (775, &data_26_1::OLD_ITEM_NAMES[..], &data_26_1::OLD_COMPONENT_NAMES[..]),
             (774, &data_1_21_11::OLD_ITEM_NAMES[..], &data_1_21_11::OLD_COMPONENT_NAMES[..]),
             (767, &data_1_21::OLD_ITEM_NAMES[..], &data_1_21::OLD_COMPONENT_NAMES[..]),
             (766, &data_1_20_5::OLD_ITEM_NAMES[..], &data_1_20_5::OLD_COMPONENT_NAMES[..]),
@@ -795,8 +832,11 @@ mod loaded_crossbow {
             assert!(added >= 1, "protocol {protocol}");
             assert_eq!(r.varint().unwrap(), idx(old_comps, "charged_projectiles"), "protocol {protocol}");
             assert_eq!(r.varint().unwrap(), 1, "protocol {protocol}: one projectile");
-            assert_eq!(r.varint().unwrap(), 1, "protocol {protocol}: projectile count");
-            assert_eq!(r.varint().unwrap(), idx(old_items, "arrow"), "protocol {protocol}: an arrow, not air");
+            // 26.1 and newer list item templates (id, then count); older ones item stacks (count, then id).
+            let (first, second) = (r.varint().unwrap(), r.varint().unwrap());
+            let (count, id) = if protocol >= 775 { (second, first) } else { (first, second) };
+            assert_eq!(count, 1, "protocol {protocol}: projectile count");
+            assert_eq!(id, idx(old_items, "arrow"), "protocol {protocol}: an arrow, not air");
         }
     }
 }

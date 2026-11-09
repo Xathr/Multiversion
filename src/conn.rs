@@ -97,6 +97,9 @@ pub struct Connection {
     pub profile: Option<Profile>,
     verify_token: Vec<u8>,
     pub chain: Option<Chain>,
+    /// For clients on Pumpkin's own version: corrects the few packets Pumpkin sends that a
+    /// client rejects (see `translate::v26_2::items::Repair`).
+    native_repair: Option<translate::v26_2::V26_3To26_2>,
     state: State,
     /// Client-side state (lags the backend by one ack).
     client_state: State,
@@ -133,6 +136,7 @@ impl Connection {
             profile: None,
             verify_token: Vec::new(),
             chain: None,
+            native_repair: None,
             state: State::Configuration,
             client_state: State::Configuration,
             held_clientbound: Vec::new(),
@@ -235,9 +239,10 @@ impl Connection {
         // A native client with the same compression threshold as Pumpkin gets Pumpkin's
         // compressed frames unchanged. The threshold must be high enough that the small
         // packets used to track login/configuration state are never compressed.
-        let native = self.chain.as_ref().is_none_or(Chain::is_passthrough);
-        let threshold = self.backend_in.compression;
-        self.backend_in.keep_compressed = native && threshold >= 64 && threshold == self.client_out.compression;
+        // Pumpkin's compressed frames used to be passed to native clients as they were. They are
+        // decoded now, because some of Pumpkin's packets have to be corrected on the way
+        // (`native_repair`), and a packet cannot be checked without reading it.
+        self.backend_in.keep_compressed = false;
         self.state = State::Configuration;
         self.client_state = State::Configuration;
         let ack = Packet::new(ids::LOGIN_S_ACKNOWLEDGED, Vec::new());
@@ -711,10 +716,17 @@ impl Connection {
             }
             _ => {}
         }
-        let pkt = Packet::new(id, payload);
+        let mut pkt = Packet::new(id, payload);
         let translated = match self.chain.as_mut() {
             Some(chain) if !chain.is_passthrough() => chain.clientbound(state_before, pkt)?,
-            _ => vec![pkt],
+            _ => {
+                if state_before == State::Play
+                    && let Some(fixed) = self.native_repair.get_or_insert_with(translate::v26_2::V26_3To26_2::new).repair_native(&pkt)
+                {
+                    pkt.payload = fixed;
+                }
+                vec![pkt]
+            }
         };
         let mut bytes = Vec::new();
         for p in translated {

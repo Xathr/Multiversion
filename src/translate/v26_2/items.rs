@@ -4,7 +4,7 @@
 //! vanilla) so the stream stays in sync; registry ids inside are remapped, and components the
 //! other side does not know are dropped or converted.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use super::data_26_2 as d;
 use crate::proto::buf::{DecodeError, Reader, Result, Writer};
@@ -37,6 +37,20 @@ pub struct Items {
     pub dir: Dir,
     /// Extra component entries produced while converting (swing → attack + interact).
     extra_added: Cell<i32>,
+    /// Corrections to the packet being read, in its own (26.3) encoding. See `Repair`.
+    repairs: RefCell<Vec<Repair>>,
+}
+
+/// A stretch of a 26.3 packet that a 26.3 client would reject, and what belongs there instead.
+/// Pumpkin writes every projectile of a loaded crossbow as an empty item, which no client accepts
+/// in a list of items. Translated clients get the corrected list as part of translation; clients
+/// on 26.3 are sent Pumpkin's packets as they are, so for them the same correction is applied to
+/// the original bytes (`V26_3To26_2::repair_native`).
+pub struct Repair {
+    /// Address of the first byte to replace, inside the packet payload that was read.
+    pub start: usize,
+    pub end: usize,
+    pub with: Vec<u8>,
 }
 
 enum Kept {
@@ -47,7 +61,57 @@ enum Kept {
 
 impl Items {
     pub fn new(dir: Dir) -> Self {
-        Self { dir, extra_added: Cell::new(0) }
+        Self { dir, extra_added: Cell::new(0), repairs: RefCell::new(Vec::new()) }
+    }
+
+    /// The corrections noted since the last call.
+    pub fn take_repairs(&self) -> Vec<Repair> {
+        std::mem::take(&mut self.repairs.borrow_mut())
+    }
+
+    /// A list of item templates that must not hold empty items (a crossbow's projectiles, a
+    /// bundle's contents). Empty entries are left out; a crossbow left with none keeps its loaded
+    /// look with one arrow. The server keeps its own copy of what is really loaded.
+    fn item_list_without_empties(&self, name: &str, r: &mut Reader, w: &mut Writer) -> Result<()> {
+        let list = r.remaining();
+        let n = r.varint()?;
+        if n < 0 || n as usize > r.len() {
+            return Err(err("item list longer than the packet"));
+        }
+        let (mut translated, mut original) = (Writer::new(), Writer::new());
+        let (mut kept, mut changed) = (0, false);
+        for _ in 0..n {
+            let entry = r.remaining();
+            let mut out = Writer::new();
+            self.item_template(r, &mut out)?;
+            let entry = &entry[..entry.len() - r.len()];
+            let mut er = Reader::new(entry);
+            let (id, count) = (er.varint()?, er.varint()?);
+            if id != 0 && count > 0 {
+                translated.raw(&out.buf);
+                original.raw(entry);
+                kept += 1;
+            } else {
+                changed = true;
+            }
+        }
+        if kept == 0 && n > 0 && name == "charged_projectiles" {
+            let arrow = d::NEW_ITEM_NAMES.iter().position(|i| *i == "arrow").unwrap_or(0) as i32;
+            for (list, id) in [(&mut translated, self.item(arrow)), (&mut original, arrow)] {
+                list.varint(id).varint(1).varint(0).varint(0);
+            }
+            kept = 1;
+        }
+        w.varint(kept);
+        w.raw(&translated.buf);
+        if changed {
+            let mut with = Writer::new();
+            with.varint(kept);
+            with.raw(&original.buf);
+            let start = list.as_ptr() as usize;
+            self.repairs.borrow_mut().push(Repair { start, end: start + (list.len() - r.len()), with: with.into_inner() });
+        }
+        Ok(())
     }
 
     // ---- id remaps -------------------------------------------------------------------------
@@ -668,9 +732,13 @@ impl Items {
                 Ok(Kept::Drop) // 26.3 removed it
             }
             "charged_projectiles" | "bundle_contents" => {
-                let n = Self::copy_varint(r, w)?;
-                for _ in 0..n {
-                    self.item_template(r, w)?;
+                if self.dir == Dir::ToServer {
+                    let n = Self::copy_varint(r, w)?;
+                    for _ in 0..n {
+                        self.item_template(r, w)?;
+                    }
+                } else {
+                    self.item_list_without_empties(name, r, w)?;
                 }
                 Ok(keep)
             }
