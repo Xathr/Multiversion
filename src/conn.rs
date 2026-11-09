@@ -74,6 +74,8 @@ pub enum Action {
     StartAuth { username: String, server_hash: String, ip: Option<String> },
     /// Pumpkin's server-list reply, to reuse for pings in the next moment.
     CacheStatus(String),
+    /// Close this connection's link to Pumpkin (after flushing), keeping the client.
+    CloseBackend,
     /// Close the client (after flushing) with a reason for the log.
     Close(String),
     Log(String),
@@ -410,15 +412,15 @@ impl Connection {
         let mut r = Reader::new(payload);
         let enc_secret = r.byte_array().map_err(|e| e.to_string())?;
         let enc_token = r.byte_array().map_err(|e| e.to_string())?;
-        let secret = shared.keys.decrypt(enc_secret)?;
-        let token = shared.keys.decrypt(enc_token)?;
+        // One answer for every way this can fail. Telling a client whether the RSA padding, the
+        // token or the key length was wrong would let it probe the server key one guess at a time.
+        const FAILED: &str = "Encryption failed";
+        let secret = shared.keys.decrypt(enc_secret).map_err(|_| FAILED)?;
+        let token = shared.keys.decrypt(enc_token).map_err(|_| FAILED)?;
+        let key: [u8; 16] = secret[..].try_into().map_err(|_| FAILED)?;
         if token != self.verify_token {
-            return Err("Invalid verify token".into());
+            return Err(FAILED.into());
         }
-        if secret.len() != 16 {
-            return Err("Invalid shared secret".into());
-        }
-        let key: [u8; 16] = secret[..].try_into().unwrap();
         self.client_in.enable_encryption(key);
         self.client_out.enable_encryption(key);
         let hash = crypto::server_hash("", &secret, &shared.keys.public_der);
@@ -560,9 +562,7 @@ impl Connection {
                     let json = r.string().map_err(|e| e.to_string())?.to_string();
                     out.push(Action::CacheStatus(json.clone()));
                     self.finish_status(Some(&json), shared, out);
-                    if let Some(b) = self.backend {
-                        out.push(Action::Log(format!("__close_backend:{b}")));
-                    }
+                    out.push(Action::CloseBackend);
                 }
                 Ok(())
             }

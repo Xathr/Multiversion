@@ -103,8 +103,15 @@ impl Tag {
 /// Reads a network NBT value: type byte, then (for non-End) the payload. Root has no name.
 pub fn read(r: &mut Reader) -> Result<Tag> {
     let ty = r.u8()?;
-    read_payload(r, ty, 0)
+    read_payload(r, ty, 0, &mut MAX_TAGS.clone())
 }
+
+/// The most tags one NBT value may hold. A tag takes far more memory than its bytes on the wire
+/// (a list of single bytes grows about 20 times), so without a cap one packet of a few megabytes
+/// could exhaust the plugin's memory. Vanilla's own registry data is well under a tenth of this.
+pub const MAX_TAGS: usize = 1 << 20;
+/// How deep compounds and lists may nest (vanilla's limit).
+pub const MAX_DEPTH: u32 = 512;
 
 /// Reads an optional network NBT (End tag = none).
 pub fn read_optional(r: &mut Reader) -> Result<Option<Tag>> {
@@ -112,7 +119,7 @@ pub fn read_optional(r: &mut Reader) -> Result<Option<Tag>> {
     if ty == 0 {
         return Ok(None);
     }
-    read_payload(r, ty, 0).map(Some)
+    read_payload(r, ty, 0, &mut MAX_TAGS.clone()).map(Some)
 }
 
 fn read_string(r: &mut Reader) -> Result<String> {
@@ -122,10 +129,11 @@ fn read_string(r: &mut Reader) -> Result<String> {
     Ok(String::from_utf8_lossy(bytes).into_owned())
 }
 
-fn read_payload(r: &mut Reader, ty: u8, depth: u32) -> Result<Tag> {
-    if depth > 512 {
+fn read_payload(r: &mut Reader, ty: u8, depth: u32, budget: &mut usize) -> Result<Tag> {
+    if depth > MAX_DEPTH {
         return Err(DecodeError::Other("nbt too deep".into()));
     }
+    *budget = budget.checked_sub(1).ok_or_else(|| DecodeError::Other("nbt has too many tags".into()))?;
     Ok(match ty {
         0 => Tag::End,
         1 => Tag::Byte(r.i8()?),
@@ -142,9 +150,14 @@ fn read_payload(r: &mut Reader, ty: u8, depth: u32) -> Result<Tag> {
         9 => {
             let elem = r.u8()?;
             let len = r.i32()?.max(0) as usize;
-            let mut v = Vec::with_capacity(len.min(1 << 16));
+            // Every element of a real list takes at least one byte. A list of End tags takes
+            // none, so its length says nothing about its size: only the empty one is valid.
+            if len > r.len() || (elem == 0 && len > 0) {
+                return Err(DecodeError::Other("nbt list longer than the packet".into()));
+            }
+            let mut v = Vec::with_capacity(len.min(1 << 12));
             for _ in 0..len {
-                v.push(read_payload(r, elem, depth + 1)?);
+                v.push(read_payload(r, elem, depth + 1, budget)?);
             }
             Tag::List(v)
         }
@@ -156,7 +169,7 @@ fn read_payload(r: &mut Reader, ty: u8, depth: u32) -> Result<Tag> {
                     break;
                 }
                 let name = read_string(r)?;
-                let value = read_payload(r, t, depth + 1)?;
+                let value = read_payload(r, t, depth + 1, budget)?;
                 entries.push((name, value));
             }
             Tag::Compound(entries)
@@ -268,7 +281,7 @@ pub fn read_named_optional(r: &mut Reader) -> Result<Option<Tag>> {
         return Ok(None);
     }
     read_string(r)?;
-    read_payload(r, ty, 0).map(Some)
+    read_payload(r, ty, 0, &mut MAX_TAGS.clone()).map(Some)
 }
 
 /// Skips over one network NBT value without building it.
@@ -290,6 +303,39 @@ mod tests {
         write(&mut w, &tag);
         let back = read(&mut Reader::new(&w.buf)).unwrap();
         assert_eq!(tag, back);
+    }
+
+    #[test]
+    fn a_list_cannot_claim_more_elements_than_the_packet_holds() {
+        // list of End tags, length i32::MAX: nine bytes that would otherwise grow without end
+        let bomb = [9u8, 0, 0x7f, 0xff, 0xff, 0xff];
+        assert!(read(&mut Reader::new(&bomb)).is_err());
+        // list of bytes claiming a million elements with two present
+        let short = [9u8, 1, 0, 0x0f, 0x42, 0x40, 1, 2];
+        assert!(read(&mut Reader::new(&short)).is_err());
+        // the empty list of End tags is what vanilla writes for an empty list
+        assert_eq!(read(&mut Reader::new(&[9, 0, 0, 0, 0, 0])).unwrap(), Tag::List(Vec::new()));
+    }
+
+    #[test]
+    fn tag_count_and_depth_are_capped() {
+        // a list of single bytes one over the cap
+        let n = MAX_TAGS as u32;
+        let mut big = vec![9u8, 1];
+        big.extend(n.to_be_bytes());
+        big.extend(std::iter::repeat_n(7u8, n as usize));
+        assert!(read(&mut Reader::new(&big)).unwrap_err().to_string().contains("too many tags"));
+        // the same list comfortably under the cap is fine
+        let mut ok = vec![9u8, 1];
+        ok.extend(1000u32.to_be_bytes());
+        ok.extend(std::iter::repeat_n(7u8, 1000));
+        assert!(read(&mut Reader::new(&ok)).is_ok());
+        // lists nested deeper than vanilla allows
+        let mut deep = Vec::new();
+        for _ in 0..MAX_DEPTH + 2 {
+            deep.extend([9u8, 9, 0, 0, 0, 1].iter().skip(usize::from(!deep.is_empty())));
+        }
+        assert!(read(&mut Reader::new(&deep)).is_err());
     }
 
     /// 1.20.1 NBT is the 1.20.2 form with an empty root name after the type byte.

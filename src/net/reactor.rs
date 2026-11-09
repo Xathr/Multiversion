@@ -48,7 +48,15 @@ struct Conn {
     state: ConnState,
     pending_out: Vec<u8>,
     close_after_flush: bool,
+    /// More was queued than `max_pending_out`; the connection is closed on the next loop turn.
+    overflowed: bool,
 }
+
+/// The most bytes that may wait to be sent on one connection. Data is queued when the other side
+/// reads slower than it arrives; a side that stops reading altogether would otherwise make the
+/// queue (and the plugin's memory) grow until the plugin is killed. A player joining with a large
+/// view distance has a few megabytes queued at most.
+pub const MAX_PENDING_OUT: usize = 48 * 1024 * 1024;
 
 pub struct Reactor {
     network: Network,
@@ -59,6 +67,9 @@ pub struct Reactor {
     pub tick_ms: u64,
     stop: bool,
     last_tick: Option<u64>,
+    /// Connections whose send queue passed `max_pending_out` since the last loop turn.
+    overflowed: Vec<Token>,
+    pub max_pending_out: usize,
 }
 
 fn to_wasi_addr(addr: SocketAddr) -> IpSocketAddress {
@@ -102,7 +113,7 @@ fn err(e: ErrorCode) -> String {
 
 impl Reactor {
     pub fn new() -> Self {
-        Self { network: instance_network(), listener: None, conns: HashMap::new(), externals: HashMap::new(), next_token: 1, tick_ms: 1000, stop: false, last_tick: None }
+        Self { network: instance_network(), listener: None, conns: HashMap::new(), externals: HashMap::new(), next_token: 1, tick_ms: 1000, stop: false, last_tick: None, overflowed: Vec::new(), max_pending_out: MAX_PENDING_OUT }
     }
 
     /// Binds and listens. Blocks until the bind completes (it is quick).
@@ -140,16 +151,25 @@ impl Reactor {
         socket.start_connect(&self.network, to_wasi_addr(addr)).map_err(|e| format!("connect {addr}: {}", err(e)))?;
         let token = self.next_token;
         self.next_token += 1;
-        self.conns.insert(token, Conn { socket, state: ConnState::Connecting, pending_out: Vec::new(), close_after_flush: false });
+        self.conns.insert(token, Conn { socket, state: ConnState::Connecting, pending_out: Vec::new(), close_after_flush: false, overflowed: false });
         Ok(token)
     }
 
     /// Queues bytes for sending. Flushed as the socket allows.
     pub fn send(&mut self, token: Token, data: &[u8]) {
         if let Some(c) = self.conns.get_mut(&token) {
-            if !matches!(c.state, ConnState::Closed) {
-                c.pending_out.extend_from_slice(data);
+            if c.overflowed || matches!(c.state, ConnState::Closed) {
+                return;
             }
+            if c.pending_out.len() + data.len() > self.max_pending_out {
+                // The other side is not reading. Free the queue now; the loop closes the
+                // connection and tells the handler.
+                c.overflowed = true;
+                c.pending_out = Vec::new();
+                self.overflowed.push(token);
+                return;
+            }
+            c.pending_out.extend_from_slice(data);
         }
     }
 
@@ -228,7 +248,10 @@ impl Reactor {
     /// host can run other plugin callbacks. Call it again to continue; state is kept.
     pub fn run_for(&mut self, handler: &mut dyn Handler, budget_ms: u64) {
         let start = wasip2::clocks::monotonic_clock::now();
-        let mut last_tick = self.last_tick.unwrap_or(start);
+        // The time of the last tick is kept across calls. This loop runs in slices much shorter
+        // than a tick, so measuring from the start of each slice would mean no tick ever fires
+        // (and with it no login timeout).
+        let mut last_tick = *self.last_tick.get_or_insert(start);
         while !self.stop {
             let elapsed_budget = (wasip2::clocks::monotonic_clock::now() - start) / 1_000_000;
             if elapsed_budget >= budget_ms {
@@ -304,6 +327,7 @@ impl Reactor {
                                             state: ConnState::Open { input, output },
                                             pending_out: Vec::new(),
                                             close_after_flush: false,
+                                            overflowed: false,
                                         });
                                         events.push(Event::Accepted { token, peer });
                                     }
@@ -369,6 +393,13 @@ impl Reactor {
                     }
                 }
                 handler.handle(self, ev);
+            }
+            // Connections that fell too far behind on reading what was sent to them.
+            for tok in std::mem::take(&mut self.overflowed) {
+                if self.conns.contains_key(&tok) {
+                    self.close_now(tok);
+                    handler.handle(self, Event::Closed { token: tok, reason: "stopped reading (send queue full)".into() });
+                }
             }
             // Flush everything with pending output (new data queued by the handler too).
             let tokens: Vec<Token> = self.conns.iter().filter(|(_, c)| !c.pending_out.is_empty() || c.close_after_flush).map(|(t, _)| *t).collect();

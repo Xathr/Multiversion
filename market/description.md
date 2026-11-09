@@ -24,7 +24,8 @@
 - 🧾 **Clear console logs**: every join and leave shows the player's version and address, including Bedrock players' version and device
 - 🧱 **Sensible stand-ins**: blocks, items and mobs an older client doesn't have appear as their closest match
 - 🖥️ **Clear startup banner**: the supported versions, ports and login mode at a glance, and every console line tagged `[Multiversion]`
-- 🛡️ **Built-in protection**: oversized packets before login are refused, and one address can only hold a few connections that are still logging in
+- 🛡️ **Built-in protection**: oversized packets before login are refused, idle logins time out, one address can only hold a few connections that are still logging in and open a limited number per 10 seconds, and malformed data is refused before it can use up memory
+- 🔔 **Update check**: tells the console and operators when a newer version is on the Market, and `/multiversion update download` fetches the signed file after checking its signature
 - ⚡ **Light on the CPU**: server-list pings are answered from a one-second cache, and Pumpkin's link to the plugin can skip compression
 - 🪶 **Self-contained**: one `.wasm` file (about 2.9 MB) and one config file
 
@@ -52,6 +53,12 @@ deny = []       # e.g. ["1.21"]
 
 [limits]
 max_logins_per_ip = 5         # connections one address may have still logging in; 0 = no limit
+max_connections_per_ip_per_10s = 40   # new connections one address may open per 10 s; 0 = no limit
+
+[updates]
+check = true                  # ask the Pumpkin Market for the latest version at startup
+notify_ops = true             # tell operators in game when a newer version is out
+download = false              # download a newer, signed Multiversion.wasm at startup
 ```
 
 ![Version filter](https://raw.githubusercontent.com/Xathr/Multiversion/main/market/screenshot-config.png)
@@ -63,9 +70,9 @@ You can also change the public and backend ports, online mode, the server-list v
 | Permission | Why |
 |---|---|
 | `network.tcp` | Listen on the public port and connect to Pumpkin on localhost |
-| `http.outbound` | Verify players with Mojang's session server |
+| `http.outbound` | Verify players with Mojang's session server, and ask the Pumpkin Market for the latest version |
 | `fs.read.data` | Read its config |
-| `fs.write.data` | Write its default config and the settings snippet |
+| `fs.write.data` | Write its default config, the settings snippet and downloaded updates |
 
 ## Good to know
 

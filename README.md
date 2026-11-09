@@ -61,7 +61,7 @@ player (26.2) ──► plugin listener :25565 ──► translator chain ──
 
 Requirements: a Pumpkin 26.3 server (Pumpkin 0.2.2, commit `eda6944`, plugin API v0.1). Nothing else: no Java, no proxy, no extra process.
 
-1. Copy `Multiversion.wasm` (from the [latest release](https://github.com/Xathr/Multiversion/releases/latest), or built with `build.sh`) into your server's `plugins/` folder.
+1. Copy `Multiversion.wasm` into your server's `plugins/` folder. The [Pumpkin Market](https://market.pumpkinmc.org/plugin/s7e5Nz2f) signs its copy, so Pumpkin loads it as verified; an unsigned build is on the [latest GitHub release](https://github.com/Xathr/Multiversion/releases/latest), or build it with `build.sh`.
 2. Start the server once. The plugin writes `plugins/data/multiversion/config.toml` with a
    fresh forwarding secret, and `pumpkin-settings.txt` next to it with the `pumpkin.toml`
    settings it needs (Pumpkin only lets plugins write their own data folder, so this edit is the
@@ -85,8 +85,51 @@ plugin's signed profile instead of asking Mojang itself.
 ### Permissions
 
 The plugin asks Pumpkin for `network.tcp` (listen + connect to Pumpkin), `http.outbound` (Mojang
-session server), `fs.read.data` and `fs.write.data` (its config). The `pumpkin-settings.txt` snippet
+session server, and the update check), `fs.read.data` and `fs.write.data` (its config and downloaded updates). The `pumpkin-settings.txt` snippet
 pre-approves them in `[plugins.overrides.multiversion]`; otherwise Pumpkin asks on the console at first load.
+
+## Updates
+
+When the server starts, the plugin asks the [Pumpkin Market](https://market.pumpkinmc.org/plugin/s7e5Nz2f)
+for its latest version. If a newer one is out it says so in the console, and tells operators in
+game a few seconds after they join.
+
+| Command | Does |
+|---|---|
+| `/multiversion update` | Shows what the last check found |
+| `/multiversion update check` | Asks the Market again |
+| `/multiversion update download` | Saves the Market's signed `Multiversion.wasm` to `plugins/data/multiversion/update/Multiversion.wasm` |
+
+The commands need operator level 3 or the `multiversion:update` permission. `check` and `download`
+run between packets, so players never wait on the Market; the result is logged to the console.
+
+Before saving a download, the plugin checks the Market's signature on it, the way Pumpkin does when
+it loads a plugin, and that the file is the announced Multiversion version. A file that fails is not
+saved. Pumpkin does not let a plugin write to `plugins/`, so the last step is yours: stop the server
+and copy the file over `plugins/Multiversion.wasm`. With `[updates] download = true` the download
+happens by itself at startup.
+
+Set `[updates] check = false` to turn the check off. The requests are plain GETs of public Market
+data, with the running plugin version; nothing about your server or players is sent.
+
+## Security
+
+The plugin is the server's front door, so it limits what a connection can cost before and after login:
+
+- frames over 64 KiB are refused before login, and frames over 8 MiB after;
+- a connection that has not finished logging in within `login_timeout_secs` is dropped;
+- one address may have `max_logins_per_ip` connections still logging in, and open
+  `max_connections_per_ip_per_10s` new connections per 10 seconds (server-list pings count);
+- a connection that stops reading while more than 48 MiB waits to be sent to it is dropped;
+- NBT data is limited in depth and in number of tags, and lists cannot claim more elements than the
+  packet holds;
+- a failed encryption handshake gets one answer whatever went wrong;
+- names and versions reported by Bedrock clients are stripped of control characters before they are
+  logged;
+- the session check with Mojang times out instead of waiting for ever.
+
+`cargo test` includes a test that throws hundreds of thousands of malformed packets at every
+version's translators and fails on any panic, hang or oversized reply.
 
 ## Bedrock players in the console
 
@@ -135,6 +178,12 @@ compression_threshold = 256        # packets to players above this size are comp
 max_connections = 200
 login_timeout_secs = 30
 max_logins_per_ip = 5              # connections one address may have still logging in; 0 = no limit
+max_connections_per_ip_per_10s = 40  # new connections one address may open per 10 s; 0 = no limit
+
+[updates]
+check = true                       # ask the Pumpkin Market for the latest version at startup
+notify_ops = true                  # tell operators in game when a newer version is out
+download = false                   # download a newer, Market-signed Multiversion.wasm at startup
 
 [messages]                         # what players see when they're disconnected
 server_starting = "The server is starting up. Please try again in a moment."
@@ -198,6 +247,10 @@ src/net/reactor.rs    poll-based reactor over WASI 0.2 TCP sockets
 src/proto/            varint/strings, NBT, framing (zlib, AES-CFB8), version table
 src/crypto.rs         RSA key pair, server hash, HMAC
 src/auth.rs           Mojang hasJoined over WASI HTTP
+src/update.rs         Pumpkin Market update check: versions, signature check (pure, unit-tested)
+src/updater.rs        the update check and download as steps the reactor drives
+src/http.rs           non-blocking HTTP GET over WASI HTTP
+src/ratelimit.rs      new connections per address
 src/conn.rs           per-connection state machine (handshake → status/login → play relay)
 src/proxy.rs          reactor handler: sockets ↔ connections, timeouts
 src/translate/        Translator trait + chain; one module per version step (v26_2/ = 26.3 ↔ 26.2, ...)

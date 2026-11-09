@@ -33,6 +33,8 @@ pub mod v1_20_5;
 pub mod v1_20_3;
 pub mod v1_20_2;
 pub mod v1_20;
+#[cfg(test)]
+mod fuzz_tests;
 
 use crate::proto::version::{Version, BACKEND, KNOWN};
 

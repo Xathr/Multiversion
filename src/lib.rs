@@ -16,7 +16,9 @@ pub mod crypto;
 pub mod net;
 pub mod platform;
 pub mod proto;
+pub mod ratelimit;
 pub mod translate;
+pub mod update;
 
 #[cfg(target_arch = "wasm32")]
 pub mod auth;
@@ -25,13 +27,91 @@ pub mod bedrock_log;
 #[cfg(target_arch = "wasm32")]
 pub mod conn;
 #[cfg(target_arch = "wasm32")]
+pub mod http;
+#[cfg(target_arch = "wasm32")]
+pub mod updater;
+#[cfg(target_arch = "wasm32")]
 pub mod proxy;
 
 #[cfg(target_arch = "wasm32")]
 mod plugin {
+    use crate::update::Status;
+    use crate::updater::{self, Job};
+    use pumpkin_plugin_api::command::{Command, CommandError, CommandNode, CommandSender, ConsumedArgs};
+    use pumpkin_plugin_api::commands::CommandHandler;
+    use pumpkin_plugin_api::events::{EventHandler, EventPriority, FromIntoEvent, PlayerJoinEvent};
+    use pumpkin_plugin_api::permission::{Permission, PermissionDefault, PermissionLevel};
     use pumpkin_plugin_api::scheduler::SchedulerExt;
-    use pumpkin_plugin_api::{Context, Plugin, PluginMetadata, permissions, register_plugin};
+    use pumpkin_plugin_api::text::TextComponent;
+    use pumpkin_plugin_api::{Context, Plugin, PluginMetadata, Server, permissions, register_plugin};
     use std::sync::Mutex;
+
+    /// Ticks to wait after a player joins before telling them about an update.
+    const JOIN_NOTICE_DELAY_TICKS: u64 = 60;
+    const UPDATE_PERMISSION: &str = "multiversion:update";
+
+    /// `/multiversion update [check|download]`.
+    struct UpdateCommand(Option<Job>);
+    impl CommandHandler for UpdateCommand {
+        fn handle(&self, sender: CommandSender, _server: Server, _args: ConsumedArgs) -> Result<i32, CommandError> {
+            let say = |line: &str| {
+                // The console shows colours and gets the plugin's tag; chat gets plain text.
+                let text = if sender.is_console() { format!("{} {line}", crate::color::tag("[Multiversion]")) } else { crate::color::strip(line) };
+                sender.send_message(TextComponent::text(&text));
+            };
+            match self.0 {
+                None => {
+                    for line in updater::lines(&updater::status()) {
+                        say(&line);
+                    }
+                    say(&crate::color::dim("commands: /multiversion update check, /multiversion update download"));
+                }
+                // The proxy runs the request between packets, so players never wait on the Market.
+                Some(job) => {
+                    if matches!(job, Job::Download) && !matches!(updater::status(), Status::Available { .. }) {
+                        say("there is no newer version to download; run /multiversion update check first");
+                    } else if updater::request(job) {
+                        say("asking the Pumpkin Market; the result is logged to the console, and /multiversion update shows it");
+                    } else {
+                        say("an update request is already running");
+                    }
+                }
+            }
+            Ok(1)
+        }
+    }
+
+    /// Tells operators about a newer version shortly after they join.
+    struct UpdateNotice;
+    impl EventHandler<PlayerJoinEvent> for UpdateNotice {
+        fn handle(&self, _server: Server, e: <PlayerJoinEvent as FromIntoEvent>::Data) -> <PlayerJoinEvent as FromIntoEvent>::Data {
+            let may_see = |p: &pumpkin_plugin_api::Player| p.has_permission(UPDATE_PERMISSION) || matches!(p.get_permission_level(), PermissionLevel::Three | PermissionLevel::Four);
+            if crate::config::get().updates.notify_ops && matches!(updater::status(), Status::Available { .. }) && may_see(&e.player) {
+                let id = e.player.get_id();
+                pumpkin_plugin_api::scheduler::schedule_delayed_task(JOIN_NOTICE_DELAY_TICKS, move |server| {
+                    let Status::Available { latest, .. } = updater::status() else { return };
+                    let Some(player) = server.get_player_by_uuid(id) else { return };
+                    let line = serde_json::json!({ "text": "", "extra": [
+                        { "text": "[Multiversion] ", "color": "blue" },
+                        { "text": format!("v{latest} is out"), "color": "yellow" },
+                        { "text": format!(" (this server runs v{}). ", updater::VERSION), "color": "gray" },
+                        { "text": "[Pumpkin Market]", "color": "aqua",
+                          "click_event": { "action": "open_url", "url": crate::update::PAGE_URL },
+                          "hover_event": { "action": "show_text", "value": [{ "text": crate::update::PAGE_URL, "color": "gray" }] } },
+                        { "text": " ", "color": "gray" },
+                        { "text": "[Details]", "color": "aqua",
+                          "click_event": { "action": "run_command", "command": "/multiversion update" },
+                          "hover_event": { "action": "show_text", "value": [{ "text": "Update status and download\nClick to run /multiversion update", "color": "gray" }] } },
+                    ]})
+                    .to_string();
+                    if let Ok(component) = TextComponent::from_json(&line) {
+                        player.send_system_message(component, false);
+                    }
+                });
+            }
+            e
+        }
+    }
 
     pub struct MultiVersion {
         config: Mutex<Option<crate::config::Config>>,
@@ -51,9 +131,9 @@ mod plugin {
                 dependencies: vec![],
                 permissions: vec![
                     permissions::NETWORK_TCP.into(),      // bind the public port, connect to Pumpkin
-                    permissions::HTTP_OUTBOUND.into(),    // sessionserver.mojang.com (online mode)
+                    permissions::HTTP_OUTBOUND.into(),    // sessionserver.mojang.com (online mode), update check
                     permissions::FS_READ_DATA.into(),     // config.toml
-                    permissions::FS_WRITE_DATA.into(),    // write default config on first start
+                    permissions::FS_WRITE_DATA.into(),    // write default config on first start, downloaded updates
                 ],
             }
         }
@@ -84,6 +164,31 @@ mod plugin {
             }
             crate::log::info(&crate::color::dim("if players can't join, apply plugins/data/multiversion/pumpkin-settings.txt to pumpkin.toml and restart"));
             *self.config.lock().unwrap() = Some(config.clone());
+            // Ask the Market for a newer version now, before the proxy carries any players.
+            updater::set_data_folder(&folder);
+            if config.updates.check {
+                let mut lines = updater::run_blocking(Job::Check);
+                if config.updates.download && matches!(updater::status(), Status::Available { downloaded: None, .. }) {
+                    lines = updater::run_blocking(Job::Download);
+                }
+                for line in lines {
+                    crate::log::info(&line);
+                }
+            }
+            let _ = context.register_permission(&Permission {
+                node: UPDATE_PERMISSION.into(),
+                description: "Use /multiversion update".into(),
+                default: PermissionDefault::Op(PermissionLevel::Three),
+                children: vec![],
+            });
+            let command = Command::new(&["multiversion".to_string()], "Multiversion update status").then(
+                CommandNode::literal("update")
+                    .then(CommandNode::literal("check").execute(UpdateCommand(Some(Job::Check))))
+                    .then(CommandNode::literal("download").execute(UpdateCommand(Some(Job::Download))))
+                    .execute(UpdateCommand(None)),
+            );
+            context.register_command(command.execute(UpdateCommand(None)), "update");
+            context.register_event_handler::<PlayerJoinEvent, _>(UpdateNotice, EventPriority::Lowest, false)?;
             // Bind now; then run the proxy loop in short slices, one per server tick, so Pumpkin
             // can still call our other hooks (and unload us on shutdown) in between.
             crate::proxy::start(config).map_err(|e| format!("multiversion: {e}"))?;

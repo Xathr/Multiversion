@@ -3,7 +3,7 @@
 
 use crate::proto::buf::uuid_from_str;
 use wasip2::http::outgoing_handler;
-use wasip2::http::types::{Fields, FutureIncomingResponse, IncomingBody, Method, OutgoingRequest, Scheme};
+use wasip2::http::types::{Fields, FutureIncomingResponse, IncomingBody, Method, OutgoingRequest, RequestOptions, Scheme};
 use wasip2::io::streams::{InputStream, StreamError};
 use wasip2::io::poll::Pollable;
 
@@ -49,6 +49,9 @@ impl PendingAuth {
     }
 }
 
+const CONNECT_TIMEOUT_NS: u64 = 5_000_000_000;
+const RESPONSE_TIMEOUT_NS: u64 = 10_000_000_000;
+
 fn url_encode(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
@@ -83,7 +86,13 @@ pub fn start(session_server: &str, username: &str, server_hash: &str, ip: Option
     req.set_scheme(Some(&if scheme == "http" { Scheme::Http } else { Scheme::Https })).map_err(|()| "scheme")?;
     req.set_authority(Some(authority)).map_err(|()| "authority")?;
     req.set_path_with_query(Some(&path)).map_err(|()| "path")?;
-    let future = outgoing_handler::handle(req, None).map_err(|e| format!("http: {e:?}"))?;
+    // Without timeouts a session server that accepts the connection and then says nothing would
+    // leave this request, and the memory it holds, waiting for ever.
+    let options = RequestOptions::new();
+    let _ = options.set_connect_timeout(Some(CONNECT_TIMEOUT_NS));
+    let _ = options.set_first_byte_timeout(Some(RESPONSE_TIMEOUT_NS));
+    let _ = options.set_between_bytes_timeout(Some(RESPONSE_TIMEOUT_NS));
+    let future = outgoing_handler::handle(req, Some(options)).map_err(|e| format!("http: {e:?}"))?;
     Ok(PendingAuth { stage: Stage::Waiting(future) })
 }
 

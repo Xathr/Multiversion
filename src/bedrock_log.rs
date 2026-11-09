@@ -33,10 +33,12 @@ pub fn device_name(os: BedrockDeviceOs) -> &'static str {
 fn describe(player: &Player) -> Option<String> {
     let bedrock = player.as_bedrock()?;
     let s = bedrock.get_settings();
-    let version = if s.game_version.is_empty() { "unknown version".to_string() } else { s.game_version.clone() };
+    // The name and version come from the player's client: strip anything that could act on the console.
+    let version = color::clean(&s.game_version, 24);
+    let version = if version.is_empty() { "unknown version".to_string() } else { version };
     Some(format!(
         "{} {} ({}{}) {}",
-        color::name(&player.get_name()),
+        color::name(&color::clean(&player.get_name(), 48)),
         color::dim(&format!("[{}]", player.get_ip())),
         color::version(&format!("Bedrock {version}")),
         color::dim(&format!(", {}", device_name(s.device_os))),

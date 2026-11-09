@@ -39,6 +39,10 @@ struct ProxyHandler {
     auths: HashMap<u32, (Token, PendingAuth)>,
     /// Pumpkin's last server-list reply and when it arrived (ms).
     status_cache: Option<(u64, String)>,
+    /// The update check or download in progress, and the id the reactor reports it under.
+    update: Option<(u32, crate::updater::Flow)>,
+    /// New connections per address, for limits.max_connections_per_ip_per_10s.
+    rate: crate::ratelimit::ConnectionRate,
 }
 
 /// How long a server-list reply from Pumpkin is reused.
@@ -96,20 +100,27 @@ impl ProxyHandler {
                 Action::CacheStatus(json) => {
                     self.status_cache = Some((now_millis(), json));
                 }
-                Action::Log(msg) => {
-                    if let Some(b) = msg.strip_prefix("__close_backend:") {
-                        if let Ok(tok) = b.parse::<Token>() {
-                            reactor.close_gracefully(tok);
-                            self.backend_of.remove(&tok);
-                            if let Some(c) = self.conns.get_mut(&client) {
-                                if c.backend == Some(tok) {
-                                    c.backend = None;
-                                }
-                            }
-                        }
-                    } else {
-                        log::info(&msg);
+                Action::CloseBackend => {
+                    if let Some(tok) = self.conns.get_mut(&client).and_then(|c| c.backend.take()) {
+                        reactor.close_gracefully(tok);
+                        self.backend_of.remove(&tok);
                     }
+                }
+                Action::Log(msg) => log::info(&msg),
+            }
+        }
+    }
+
+    /// Keeps an update job going: waits for its next step, or logs the outcome.
+    fn drive_update(&mut self, reactor: &mut Reactor, progress: crate::updater::FlowProgress) {
+        match progress {
+            crate::updater::FlowProgress::Pending(flow) => {
+                let id = reactor.watch(flow.pollable());
+                self.update = Some((id, flow));
+            }
+            crate::updater::FlowProgress::Done(lines) => {
+                for line in lines {
+                    log::info(&line);
                 }
             }
         }
@@ -151,6 +162,13 @@ impl Handler for ProxyHandler {
                 if self.conns.len() >= self.config.limits.max_connections {
                     if self.config.logging.debug {
                         log::info(&format!("{} {peer} refused: limits.max_connections ({}) reached", crate::color::dim("debug:"), self.config.limits.max_connections));
+                    }
+                    reactor.close_now(token);
+                    return;
+                }
+                if !self.rate.allow(peer.ip(), now_millis(), self.config.limits.max_connections_per_ip_per_10s) {
+                    if self.config.logging.debug {
+                        log::info(&format!("{} {peer} refused: limits.max_connections_per_ip_per_10s ({}) reached", crate::color::dim("debug:"), self.config.limits.max_connections_per_ip_per_10s));
                     }
                     reactor.close_now(token);
                     return;
@@ -212,6 +230,11 @@ impl Handler for ProxyHandler {
                 }
             }
             Event::External { id } => {
+                if self.update.as_ref().is_some_and(|(update_id, _)| *update_id == id) {
+                    let (_, flow) = self.update.take().expect("checked above");
+                    self.drive_update(reactor, flow.advance());
+                    return;
+                }
                 if let Some((client, pending)) = self.auths.remove(&id) {
                     let outcome = match auth::advance(pending) {
                         auth::Progress::Done(outcome) => outcome,
@@ -232,7 +255,14 @@ impl Handler for ProxyHandler {
             }
             Event::Tick => {
                 // Drop connections stuck before play for too long.
+                // An update check or download asked for with /multiversion update.
+                if self.update.is_none()
+                    && let Some(job) = crate::updater::take_request()
+                {
+                    self.drive_update(reactor, crate::updater::Flow::start(job));
+                }
                 let now = now_millis();
+                self.rate.prune(now);
                 let timeout = self.config.limits.login_timeout_secs * 1000;
                 let stale: Vec<Token> = self
                     .conns
@@ -278,6 +308,12 @@ pub fn tick() {
 pub fn start(config: Config) -> Result<(), String> {
     let listen = resolve(&config.listen.address)?;
     let backend_addr = resolve(&config.backend.address)?;
+    if !backend_addr.ip().is_loopback() {
+        log::warn(&format!(
+            "backend.address {backend_addr} is not a loopback address: other machines can reach Pumpkin's port directly, \
+             and the forwarding secret is all that stops them logging in as anyone. Use 127.0.0.1, or firewall that port."
+        ));
+    }
     let keys = ServerKeys::generate()?;
     let mut reactor = Reactor::new();
     if let Err(e) = reactor.listen(listen, 128) {
@@ -301,6 +337,8 @@ pub fn start(config: Config) -> Result<(), String> {
         backend_of: HashMap::new(),
         auths: HashMap::new(),
         status_cache: None,
+        rate: crate::ratelimit::ConnectionRate::default(),
+        update: None,
     };
     *PROXY.lock().unwrap_or_else(|p| p.into_inner()) = Some(Proxy { reactor, handler });
     Ok(())

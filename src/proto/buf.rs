@@ -123,16 +123,18 @@ impl<'a> Reader<'a> {
     }
     pub fn long_array(&mut self) -> Result<Vec<i64>> {
         let len = self.varint()?;
-        if len < 0 {
-            return Err(DecodeError::Other("negative array length".into()));
+        if len < 0 || len as usize > self.len() / 8 {
+            return Err(DecodeError::Other("array longer than the packet".into()));
         }
         (0..len).map(|_| self.i64()).collect()
     }
     /// VarInt-prefixed list.
     pub fn list<T>(&mut self, mut f: impl FnMut(&mut Self) -> Result<T>) -> Result<Vec<T>> {
         let len = self.varint()?;
-        if len < 0 {
-            return Err(DecodeError::Other("negative list length".into()));
+        // Every element takes at least one byte, so a longer list than the bytes left is a lie:
+        // refuse it before looping over it.
+        if len < 0 || len as usize > self.len() {
+            return Err(DecodeError::Other("list longer than the packet".into()));
         }
         (0..len).map(|_| f(self)).collect()
     }

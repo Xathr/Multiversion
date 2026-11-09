@@ -16,6 +16,7 @@ pub struct Config {
     pub status: Status,
     pub versions: Versions,
     pub limits: Limits,
+    pub updates: Updates,
     pub messages: Messages,
     pub logging: Logging,
 }
@@ -82,6 +83,9 @@ pub struct Limits {
     /// don't count, so several people behind one router can all play). Stops one address from
     /// filling max_connections. 0 = no limit.
     pub max_logins_per_ip: usize,
+    /// New connections one IP address may open per 10 seconds (server-list pings count). Stops
+    /// one address from keeping the server busy with a stream of short connections. 0 = no limit.
+    pub max_connections_per_ip_per_10s: u32,
 }
 
 impl Default for Config {
@@ -93,10 +97,27 @@ impl Default for Config {
             status: Status::default(),
             versions: Versions::default(),
             limits: Limits::default(),
+            updates: Updates::default(),
             console_colors: true,
             messages: Messages::default(),
             logging: Logging::default(),
         }
+    }
+}
+/// The update check against the Pumpkin Market.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Updates {
+    /// Ask the Pumpkin Market for the latest version when the server starts.
+    pub check: bool,
+    /// Tell operators in game, when they join, that a newer version is out.
+    pub notify_ops: bool,
+    /// Download a newer, Market-signed Multiversion.wasm into the data folder at startup.
+    pub download: bool,
+}
+impl Default for Updates {
+    fn default() -> Self {
+        Self { check: true, notify_ops: true, download: false }
     }
 }
 impl Default for Listen {
@@ -134,7 +155,7 @@ impl Default for Versions {
 }
 impl Default for Limits {
     fn default() -> Self {
-        Self { compression_threshold: 256, max_connections: 200, login_timeout_secs: 30, max_logins_per_ip: 5 }
+        Self { compression_threshold: 256, max_connections: 200, login_timeout_secs: 30, max_logins_per_ip: 5, max_connections_per_ip_per_10s: 40 }
     }
 }
 
