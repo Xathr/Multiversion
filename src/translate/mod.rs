@@ -840,3 +840,50 @@ mod loaded_crossbow {
         }
     }
 }
+
+#[cfg(test)]
+mod placed_painting {
+    use super::*;
+    use crate::proto::buf::{Reader, Writer};
+
+    /// Pumpkin sends a painting's variant as a plain registry id; clients expect the id plus one
+    /// (0 means a definition follows). Its first painting therefore disconnected every client.
+    #[test]
+    fn painting_variant_reaches_every_client_as_id_plus_one() {
+        for raw in [0, 5] {
+            let mut w = Writer::new();
+            w.varint(321); // entity id
+            w.u8(8).varint(v26_2::entity_type_painting_variant()).varint(raw);
+            w.u8(0xff);
+            let packet = Packet::new(v26_2::ids::new::SET_ENTITY_DATA, w.into_inner());
+
+            // 26.3: Pumpkin's packet with only that value changed.
+            let fixed = v26_2::V26_3To26_2::new().repair_native(&packet).expect("corrected for 26.3 clients");
+            let mut r = Reader::new(&fixed);
+            assert_eq!(r.varint().unwrap(), 321);
+            assert_eq!(r.u8().unwrap(), 8);
+            r.varint().unwrap();
+            assert_eq!(r.varint().unwrap(), raw + 1);
+            assert_eq!(r.u8().unwrap(), 0xff);
+            assert!(r.is_empty());
+
+            // Translated clients: the packet survives the whole chain and carries id + 1.
+            for protocol in [776, 774, 769, 767, 765, 763] {
+                let mut chain = Chain::for_client(Version { protocol }).unwrap();
+                let out = chain.clientbound(State::Play, packet.clone()).unwrap_or_else(|e| panic!("protocol {protocol}: {e}"));
+                assert_eq!(out.len(), 1, "protocol {protocol}");
+                let mut r = Reader::new(&out[0].payload);
+                assert_eq!(r.varint().unwrap(), 321, "protocol {protocol}");
+                assert_eq!(r.u8().unwrap(), 8, "protocol {protocol}");
+                r.varint().unwrap();
+                // 1.20.5 and newer read "id plus one"; older versions read the plain id, which
+                // their own step converts to.
+                if protocol >= 766 {
+                    assert_eq!(r.varint().unwrap(), raw + 1, "protocol {protocol}: variant");
+                } else if raw == 0 {
+                    assert_eq!(r.varint().unwrap(), 0, "protocol {protocol}: variant");
+                }
+            }
+        }
+    }
+}

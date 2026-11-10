@@ -54,13 +54,17 @@ impl V26_3To26_2 {
         let mut payload: Option<Vec<u8>> = None;
         // An item inside a repaired list can need repair itself (a crossbow in a bundle): go
         // round again until nothing is left to correct.
-        for _ in 0..4 {
+        for round in 0..4 {
             let current = Packet::new(pkt.id, payload.clone().unwrap_or_else(|| pkt.payload.clone()));
             self.to_client.take_repairs();
             // Only the corrections are wanted; the 26.2 packet this produces is thrown away, and
             // a packet this step cannot read is left for the client to judge.
             let _ = self.play_clientbound(&current, &mut Vec::new());
-            let repairs = self.to_client.take_repairs();
+            let mut repairs = self.to_client.take_repairs();
+            if round > 0 {
+                // Already made in the first round; making them again would change the result.
+                repairs.retain(|r| r.settles);
+            }
             if !carries_items || repairs.is_empty() {
                 break;
             }
@@ -285,6 +289,12 @@ fn apply_repairs(payload: &[u8], mut repairs: Vec<items::Repair>) -> Option<Vec<
     }
     out.extend_from_slice(&payload[done..]);
     Some(out)
+}
+
+/// The entity data type number for a painting's variant in 26.3 (for tests elsewhere).
+#[cfg(test)]
+pub fn entity_type_painting_variant() -> i32 {
+    entity::ty::PAINTING_VARIANT
 }
 
 #[allow(dead_code)]

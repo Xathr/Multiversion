@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::data_26_2 as d;
-use super::items::{Dir, Items, Reg};
+use super::items::{Dir, Items};
 use super::misc::Misc;
 use crate::proto::buf::{DecodeError, Reader, Result, Writer};
 
@@ -12,7 +12,7 @@ fn err(msg: &str) -> DecodeError {
 }
 
 /// Entity data value types (26.3 ids; 26.2 has the same list without 43 = dye color).
-mod ty {
+pub(super) mod ty {
     pub const BYTE: i32 = 0;
     pub const VARINT: i32 = 1;
     pub const VARLONG: i32 = 2;
@@ -208,13 +208,17 @@ impl Entities {
                 }
             }
             ty::PAINTING_VARIANT => {
-                items.holder(r, w, Reg::Same, |_, r, w| {
-                    Items::copy_varint(r, w)?;
-                    Items::copy_varint(r, w)?;
-                    Items::copy_string(r, w)?;
-                    Items::copy_opt_nbt(r, w)?;
-                    Items::copy_opt_nbt(r, w)
-                })?;
+                // Pumpkin (0.2.2) writes the painting's plain registry id here. Clients read this
+                // value as "0: a whole painting definition follows; otherwise the id plus one",
+                // so Pumpkin's first painting (id 0) made them read past the end of the packet
+                // and disconnect, and every other painting showed as the one before it. Send
+                // the id plus one; for 26.3 clients the same change is made in Pumpkin's bytes.
+                let before = r.remaining();
+                let id = r.varint()?;
+                let mut holder = Writer::new();
+                holder.varint(id.saturating_add(1));
+                w.raw(&holder.buf);
+                items.note_repair(&before[..before.len() - r.len()], holder.into_inner(), false);
             }
             ty::RESOLVABLE_PROFILE => {
                 if Items::copy_bool(r, w)? {

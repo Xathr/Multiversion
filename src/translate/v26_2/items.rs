@@ -51,6 +51,9 @@ pub struct Repair {
     pub start: usize,
     pub end: usize,
     pub with: Vec<u8>,
+    /// The replacement no longer needs this repair (removing empty items). False for a repair
+    /// that would apply again to its own result (adding one to an id), which must be made once.
+    pub settles: bool,
 }
 
 enum Kept {
@@ -62,6 +65,18 @@ enum Kept {
 impl Items {
     pub fn new(dir: Dir) -> Self {
         Self { dir, extra_added: Cell::new(0), repairs: RefCell::new(Vec::new()) }
+    }
+
+    /// Notes that the bytes `read` (a stretch of the packet being read) should be `with`.
+    /// `settles`: see [`Repair::settles`].
+    pub fn note_repair(&self, read: &[u8], with: Vec<u8>, settles: bool) {
+        let mut repairs = self.repairs.borrow_mut();
+        // Only clients on 26.3 collect these; for translated clients they would pile up.
+        if repairs.len() >= 64 {
+            repairs.clear();
+        }
+        let start = read.as_ptr() as usize;
+        repairs.push(Repair { start, end: start + read.len(), with, settles });
     }
 
     /// The corrections noted since the last call.
@@ -108,8 +123,7 @@ impl Items {
             let mut with = Writer::new();
             with.varint(kept);
             with.raw(&original.buf);
-            let start = list.as_ptr() as usize;
-            self.repairs.borrow_mut().push(Repair { start, end: start + (list.len() - r.len()), with: with.into_inner() });
+            self.note_repair(&list[..list.len() - r.len()], with.into_inner(), true);
         }
         Ok(())
     }
