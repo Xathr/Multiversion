@@ -667,27 +667,35 @@ impl Connection {
     /// Velocity modern forwarding v1 payload, signed with the shared secret (what Pumpkin checks).
     fn velocity_answer(&self, message_id: i32, shared: &Shared) -> Packet {
         let profile = self.profile.as_ref().expect("profile");
-        let mut p = Writer::new();
-        p.varint(1);
-        p.string(&self.peer.ip().to_string());
-        p.uuid(profile.id);
-        p.string(&profile.name);
-        p.varint(profile.properties.len() as i32);
-        for prop in &profile.properties {
-            p.string(&prop.name);
-            p.string(&prop.value);
-            p.option(prop.signature.as_deref(), |w, s| {
-                w.string(s);
-            });
-        }
-        let sig = crypto::hmac_sha256(shared.config.backend.forwarding_secret.as_bytes(), &p.buf);
-        let mut w = Writer::new();
-        w.varint(message_id);
-        w.bool(true);
-        w.raw(&sig);
-        w.raw(&p.buf);
-        Packet::new(ids::LOGIN_S_CUSTOM_QUERY_ANSWER, w.into_inner())
+        velocity_answer(message_id, &self.peer.ip().to_string(), profile, &shared.config.backend.forwarding_secret)
     }
+}
+
+/// The answer to Pumpkin's `velocity:player_info` request for a player at `ip`.
+pub fn velocity_answer(message_id: i32, ip: &str, profile: &Profile, secret: &str) -> Packet {
+    let mut p = Writer::new();
+    p.varint(1);
+    p.string(ip);
+    p.uuid(profile.id);
+    p.string(&profile.name);
+    p.varint(profile.properties.len() as i32);
+    for prop in &profile.properties {
+        p.string(&prop.name);
+        p.string(&prop.value);
+        p.option(prop.signature.as_deref(), |w, s| {
+            w.string(s);
+        });
+    }
+    let sig = crypto::hmac_sha256(secret.as_bytes(), &p.buf);
+    let mut w = Writer::new();
+    w.varint(message_id);
+    w.bool(true);
+    w.raw(&sig);
+    w.raw(&p.buf);
+    Packet::new(ids::LOGIN_S_CUSTOM_QUERY_ANSWER, w.into_inner())
+}
+
+impl Connection {
 
     fn translate_clientbound(&mut self, pkt: Packet) -> Result<Vec<Packet>, String> {
         match self.chain.as_mut() {

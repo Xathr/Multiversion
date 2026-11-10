@@ -62,22 +62,35 @@ player (26.2) ──► plugin listener :25565 ──► translator chain ──
 Requirements: a Pumpkin 26.3 server (Pumpkin 0.2.2, commit `eda6944`, plugin API v0.1). Nothing else: no Java, no proxy, no extra process.
 
 1. Copy `Multiversion.wasm` into your server's `plugins/` folder. The [Pumpkin Market](https://market.pumpkinmc.org/plugin/s7e5Nz2f) signs its copy, so Pumpkin loads it as verified; an unsigned build is on the [latest GitHub release](https://github.com/Xathr/Multiversion/releases/latest), or build it with `build.sh`.
-2. Start the server once. The plugin writes `plugins/data/multiversion/config.toml` with a
-   fresh forwarding secret, and `pumpkin-settings.txt` next to it with the `pumpkin.toml`
-   settings it needs (Pumpkin only lets plugins write their own data folder, so this edit is the
-   one thing it cannot do itself):
-   - `networking.java.address = "127.0.0.1:25566"`: Pumpkin moves to a localhost port and the
-     plugin takes over 25565;
-   - `networking.proxy.enabled = true` and `networking.proxy.velocity` enabled with the secret:
-     Pumpkin accepts the signed identity the plugin forwards;
-   - `plugins.enabled = true` with the plugin's permissions pre-approved;
-   - `networking.java.compression.enabled = false`: Pumpkin's local link to the plugin isn't
-     compressed, which saves CPU. Players' connections are still compressed by the plugin. To keep
-     Pumpkin's compression, set `pumpkin_compression = true` under `[backend]` in the plugin's
-     `config.toml` and skip this one.
-   Paste them into `pumpkin.toml` and restart. If you skip this, the plugin tells you on the console
-   exactly which setting is missing (port still held by Pumpkin, or forwarding not enabled).
-3. Players keep connecting to port 25565. Keep 25566 closed in the firewall.
+2. Start the server and answer `y` when Pumpkin asks to approve the plugin's permissions. The
+   plugin prints the lines to change in `pumpkin.toml`, for example:
+
+   ```
+   [Multiversion] SETUP NEEDED (one time): stop the server, open pumpkin.toml and change these 4 lines:
+   [Multiversion]     [networking.java]             address = "127.0.0.1:25566"
+   [Multiversion]     [networking.proxy]            enabled = true
+   [Multiversion]     [networking.proxy.velocity]   enabled = true
+   [Multiversion]     [networking.proxy.velocity]   secret = "..."
+   ```
+
+   The same list, with your own secret filled in, is saved as
+   `plugins/data/multiversion/pumpkin-settings.txt`.
+3. Stop the server, open `pumpkin.toml` (in the server folder) in a text editor and change those
+   lines. Each one is already in the file, under the heading shown in `[brackets]`. Save it.
+4. Start the server. The plugin checks Pumpkin's settings and prints
+   `setup check passed`, or lists only the lines that are still wrong.
+
+That is the whole setup, and it is the same on Linux and Windows. Players keep connecting to port
+25565; keep 25566 closed in the firewall.
+
+Why the edit is yours to make: Pumpkin lets a plugin write only inside its own data folder, so the
+plugin cannot change `pumpkin.toml` itself. The first line moves Pumpkin to a local port so the
+plugin can take over 25565; the other three make Pumpkin accept the signed player identity the
+plugin forwards.
+
+Two optional settings are listed in `pumpkin-settings.txt`: turning off Pumpkin's compression on
+its local link to the plugin (saves CPU), and pre-approving the plugin's permissions so Pumpkin
+stops asking.
 
 `online_mode` in `pumpkin.toml` can stay `true`: with forwarding enabled, Pumpkin trusts the
 plugin's signed profile instead of asking Mojang itself.
@@ -85,8 +98,8 @@ plugin's signed profile instead of asking Mojang itself.
 ### Permissions
 
 The plugin asks Pumpkin for `network.tcp` (listen + connect to Pumpkin), `http.outbound` (Mojang
-session server, and the update check), `fs.read.data` and `fs.write.data` (its config and downloaded updates). The `pumpkin-settings.txt` snippet
-pre-approves them in `[plugins.overrides.multiversion]`; otherwise Pumpkin asks on the console at first load.
+session server, and the update check), `fs.read.data` and `fs.write.data` (its config and downloaded updates). Pumpkin asks on the console when the plugin first loads;
+`pumpkin-settings.txt` shows the two lines that pre-approve them.
 
 ## Updates
 

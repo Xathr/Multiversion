@@ -317,47 +317,89 @@ pub fn fill_missing(text: &str, cfg: &Config) -> Option<String> {
     Some(format!("{}{gap}{top}\n{rest}", &body[..opening]))
 }
 
-/// The pumpkin.toml settings this plugin needs, ready to paste. Pumpkin's `online_mode` can stay
-/// on: with proxy forwarding enabled Pumpkin trusts the signed profile instead of asking Mojang.
+/// A pumpkin.toml line the plugin depends on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Need {
+    /// Pumpkin listens on the backend address, leaving the public port to the plugin.
+    Address,
+    ProxyEnabled,
+    VelocityEnabled,
+    /// Pumpkin's forwarding secret equals the plugin's.
+    Secret,
+}
+
+pub const ALL_NEEDS: [Need; 4] = [Need::Address, Need::ProxyEnabled, Need::VelocityEnabled, Need::Secret];
+
+/// The lines to change in pumpkin.toml for `needs`: the heading each is found under, then the
+/// line as it should read. Every one of them is already in the file Pumpkin writes.
+pub fn setup_lines(cfg: &Config, needs: &[Need]) -> Vec<String> {
+    let secret = cfg.backend.forwarding_secret.replace('\\', "\\\\").replace('"', "\\\"");
+    needs
+        .iter()
+        .map(|need| {
+            let (heading, line) = match need {
+                Need::Address => ("[networking.java]", format!("address = \"{}\"", cfg.backend.address)),
+                Need::ProxyEnabled => ("[networking.proxy]", "enabled = true".to_string()),
+                Need::VelocityEnabled => ("[networking.proxy.velocity]", "enabled = true".to_string()),
+                Need::Secret => ("[networking.proxy.velocity]", format!("secret = \"{secret}\"")),
+            };
+            format!("{heading:<29} {line}")
+        })
+        .collect()
+}
+
+/// What the console says when setup is not finished: the lines still to change, and where.
+pub fn setup_message(cfg: &Config, needs: &[Need]) -> Vec<String> {
+    let count = if needs.len() == 1 { "this line".to_string() } else { format!("these {} lines", needs.len()) };
+    let mut out = vec![format!("SETUP NEEDED (one time): stop the server, open pumpkin.toml and change {count}:")];
+    out.extend(setup_lines(cfg, needs).into_iter().map(|l| format!("    {l}")));
+    out.push("Each is already in the file, under the heading in [brackets]. Save, then start the server.".to_string());
+    out.push("The same list is in plugins/data/multiversion/pumpkin-settings.txt.".to_string());
+    out
+}
+
+/// `pumpkin-settings.txt`: the same setup steps as a file to read next to pumpkin.toml. Pumpkin's
+/// `online_mode` can stay on: with forwarding enabled it trusts the signed profile instead of
+/// asking Mojang.
 pub fn pumpkin_snippet(cfg: &Config) -> String {
+    let lines: String = setup_lines(cfg, &ALL_NEEDS).iter().map(|l| format!("    {l}\n")).collect();
+    let backend_port = cfg.backend.address.rsplit(':').next().unwrap_or("25566");
+    let compression = if cfg.backend.pumpkin_compression {
+        String::new()
+    } else {
+        format!(
+            "    {:<29} enabled = false\n\
+             \x20       Saves CPU: Pumpkin stops compressing its local link to the plugin. Players'\n\
+             \x20       connections are still compressed by the plugin.\n\n",
+            "[networking.java.compression]"
+        )
+    };
     format!(
-        "# multiversion needs these settings in pumpkin.toml (restart the server afterwards):\n\
-         #\n\
-         # 1. Pumpkin moves to a localhost port; the plugin takes over {public}.\n\
-         [networking.java]\n\
-         address = \"{backend}\"\n\
+        "multiversion: one-time setup\n\
+         ============================\n\
          \n\
-         # 2. Pumpkin accepts the player identity the plugin forwards (signed with the shared secret).\n\
-         [networking.proxy]\n\
-         enabled = true\n\
+         1. Stop the server.\n\
+         2. Open pumpkin.toml (in the server folder) in a text editor and change these lines.\n\
+         \x20  Each one is already in the file, under the heading shown in [brackets]:\n\
          \n\
-         [networking.proxy.velocity]\n\
-         enabled = true\n\
-         secret = \"{secret}\"\n\
+         {lines}\
          \n\
-         # 3. Plugins on, with this plugin's permissions pre-approved (or answer the console prompt).\n\
-         [plugins]\n\
-         enabled = true\n\
+         3. Save the file and start the server.\n\
          \n\
-         [plugins.overrides.multiversion]\n\
-         allowed_permissions = [\"network.tcp\", \"http.outbound\", \"fs.read.data\", \"fs.write.data\"]\n\
+         Players keep connecting to port {public_port}. Keep port {backend_port} closed in your firewall.\n\
+         Every time the server starts, the plugin checks these settings and says in the console\n\
+         either that it is ready or which line is still wrong.\n\
+         \n\
+         Optional\n\
+         --------\n\
          \n\
          {compression}\
-         # Keep {backend_port} closed in your firewall; only {public} needs to be open.\n",
-        public = cfg.listen.address,
-        backend = cfg.backend.address,
-        backend_port = cfg.backend.address.rsplit(':').next().unwrap_or("25566"),
-        secret = cfg.backend.forwarding_secret.replace('\\', "\\\\").replace('"', "\\\""),
-        compression = if cfg.backend.pumpkin_compression {
-            ""
-        } else {
-            "# 4. Pumpkin doesn't compress its local link to the plugin (players' connections are still\n\
-             #    compressed by the plugin). To keep Pumpkin's compression instead, set\n\
-             #    [backend] pumpkin_compression = true in plugins/data/multiversion/config.toml and skip this.\n\
-             [networking.java.compression]\n\
-             enabled = false\n\
-             \n"
-        },
+         \x20   To stop Pumpkin asking to approve the plugin's permissions when it starts, add these\n\
+         \x20   two lines at the very end of pumpkin.toml:\n\
+         \n\
+         [plugins.overrides.multiversion]\n\
+         allowed_permissions = [\"network.tcp\", \"http.outbound\", \"fs.read.data\", \"fs.write.data\"]\n",
+        public_port = cfg.listen.address.rsplit(':').next().unwrap_or("25565"),
     )
 }
 
@@ -476,7 +518,7 @@ mod snippet_tests {
     #[test]
     fn snippet_follows_pumpkin_compression() {
         let mut cfg = Config::default();
-        assert!(pumpkin_snippet(&cfg).contains("[networking.java.compression]\nenabled = false"));
+        assert!(pumpkin_snippet(&cfg).contains("[networking.java.compression] enabled = false"));
         cfg.backend.pumpkin_compression = true;
         assert!(!pumpkin_snippet(&cfg).contains("[networking.java.compression]"));
         let parsed: Config = toml::from_str("[backend]\npumpkin_compression = true\n").unwrap();
@@ -521,5 +563,25 @@ mod snippet_tests {
         // A complete file is left alone.
         assert!(fill_missing(&filled, &back).is_none());
         assert!(fill_missing("not [toml", &cfg).is_none());
+    }
+
+    #[test]
+    fn setup_lines_name_the_heading_and_the_line() {
+        let mut cfg = Config::default();
+        cfg.backend.forwarding_secret = "s3cret".into();
+        let lines = setup_lines(&cfg, &ALL_NEEDS);
+        assert_eq!(lines[0], "[networking.java]             address = \"127.0.0.1:25566\"");
+        assert_eq!(lines[1], "[networking.proxy]            enabled = true");
+        assert_eq!(lines[2], "[networking.proxy.velocity]   enabled = true");
+        assert_eq!(lines[3], "[networking.proxy.velocity]   secret = \"s3cret\"");
+        // Only what is still wrong is listed.
+        let msg = setup_message(&cfg, &[Need::Secret]);
+        assert!(msg[0].contains("change this line"));
+        assert_eq!(msg.iter().filter(|l| l.contains("[networking.")).count(), 1);
+        let file = pumpkin_snippet(&cfg);
+        for line in &lines {
+            assert!(file.contains(line.as_str()), "{line} is in the settings file");
+        }
+        assert!(file.contains("1. Stop the server.") && file.contains("Keep port 25566 closed"));
     }
 }

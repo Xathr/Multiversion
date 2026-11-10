@@ -422,7 +422,7 @@ dependencies = [
 
 [[package]]
 name = "multiversion"
-version = "0.2.18"
+version = "0.3.0"
 dependencies = [
  "aes",
  "cfb8",

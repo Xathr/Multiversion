@@ -41,6 +41,8 @@ struct ProxyHandler {
     status_cache: Option<(u64, String)>,
     /// The update check or download in progress, and the id the reactor reports it under.
     update: Option<(u32, crate::updater::Flow)>,
+    /// The check of Pumpkin's settings that runs once after start.
+    setup: crate::setup_check::Check,
     /// New connections per address, for limits.max_connections_per_ip_per_10s.
     rate: crate::ratelimit::ConnectionRate,
 }
@@ -111,6 +113,64 @@ impl ProxyHandler {
         }
     }
 
+    /// The setup check has its answer: hang up and tell the console.
+    fn finish_setup_check(&mut self, reactor: &mut Reactor, verdict: crate::setup_check::Verdict) {
+        use crate::setup_check::Verdict;
+        if let Some(token) = self.setup.token.take() {
+            reactor.close_now(token);
+        }
+        self.setup.done = true;
+        match verdict {
+            Verdict::Ready => log::info(&format!(
+                "{} {}",
+                crate::color::good("setup check passed:"),
+                crate::color::dim(&format!("Pumpkin is on {} and accepts the players this plugin forwards", self.backend_addr))
+            )),
+            Verdict::Needs(needs) => {
+                for line in crate::config::setup_message(&self.config, &needs) {
+                    log::warn(&line);
+                }
+                log::warn("Until then players cannot join.");
+            }
+            Verdict::Unclear(why) => log::info(&crate::color::dim(&format!("setup check: Pumpkin answered the test login with: {why}"))),
+        }
+    }
+
+    /// The setup check's connection to Pumpkin failed or closed early: try again shortly, and
+    /// after enough tries conclude Pumpkin is not listening where the plugin expects it.
+    fn retry_setup_check(&mut self, reactor: &mut Reactor) {
+        self.setup.reset_connection();
+        if self.setup.attempts >= crate::setup_check::MAX_ATTEMPTS {
+            self.finish_setup_check(reactor, crate::setup_check::Verdict::Needs(vec![crate::config::Need::Address]));
+        } else {
+            self.setup.next_try_ms = now_millis() + crate::setup_check::RETRY_MS;
+        }
+    }
+
+    /// Events on the setup check's own connection. True if `token` was that connection.
+    fn setup_check_event(&mut self, reactor: &mut Reactor, event: &Event) -> bool {
+        let Some(own) = self.setup.token else { return false };
+        match event {
+            Event::Connected { token, result } if *token == own => match result {
+                Ok(()) => {
+                    let hello = self.setup.hello(self.backend_addr);
+                    reactor.send(own, &hello);
+                }
+                Err(_) => self.retry_setup_check(reactor),
+            },
+            Event::Data { token, data } if *token == own => {
+                let (reply, verdict) = self.setup.on_data(data, &self.config.backend.forwarding_secret);
+                reactor.send(own, &reply);
+                if let Some(verdict) = verdict {
+                    self.finish_setup_check(reactor, verdict);
+                }
+            }
+            Event::Closed { token, .. } if *token == own => self.retry_setup_check(reactor),
+            _ => return false,
+        }
+        true
+    }
+
     /// Keeps an update job going: waits for its next step, or logs the outcome.
     fn drive_update(&mut self, reactor: &mut Reactor, progress: crate::updater::FlowProgress) {
         match progress {
@@ -156,7 +216,9 @@ impl Handler for ProxyHandler {
             reactor.stop();
             return;
         }
-        let _ = &reactor;
+        if self.setup_check_event(reactor, &event) {
+            return;
+        }
         match event {
             Event::Accepted { token, peer } => {
                 if self.conns.len() >= self.config.limits.max_connections {
@@ -255,6 +317,14 @@ impl Handler for ProxyHandler {
             }
             Event::Tick => {
                 // Drop connections stuck before play for too long.
+                // The check of Pumpkin's settings, once after start.
+                if !self.setup.done && self.setup.token.is_none() && now_millis() >= self.setup.next_try_ms {
+                    self.setup.attempts += 1;
+                    match reactor.connect(self.backend_addr) {
+                        Ok(token) => self.setup.token = Some(token),
+                        Err(_) => self.retry_setup_check(reactor),
+                    }
+                }
                 // An update check or download asked for with /multiversion update.
                 if self.update.is_none()
                     && let Some(job) = crate::updater::take_request()
@@ -304,8 +374,9 @@ pub fn tick() {
     }
 }
 
-/// Sets the proxy up (keys, listener). After this, `tick` drives it.
-pub fn start(config: Config) -> Result<(), String> {
+/// Sets the proxy up (keys, listener). After this, `tick` drives it. `Ok(false)` if the public
+/// port is taken, which on a first start means Pumpkin itself still has it.
+pub fn start(config: Config) -> Result<bool, String> {
     let listen = resolve(&config.listen.address)?;
     let backend_addr = resolve(&config.backend.address)?;
     if !backend_addr.ip().is_loopback() {
@@ -318,12 +389,7 @@ pub fn start(config: Config) -> Result<(), String> {
     let mut reactor = Reactor::new();
     if let Err(e) = reactor.listen(listen, 128) {
         if e.contains("address-in-use") || e.contains("AddressInUse") {
-            return Err(format!(
-                "port {} is taken, most likely by Pumpkin itself. Set [networking.java] address = \"{}\" in pumpkin.toml \
-                 (all the settings the plugin needs are in plugins/data/multiversion/pumpkin-settings.txt) and restart.",
-                listen.port(),
-                config.backend.address
-            ));
+            return Ok(false);
         }
         return Err(e);
     }
@@ -338,7 +404,8 @@ pub fn start(config: Config) -> Result<(), String> {
         status_cache: None,
         rate: crate::ratelimit::ConnectionRate::default(),
         update: None,
+        setup: crate::setup_check::Check::default(),
     };
     *PROXY.lock().unwrap_or_else(|p| p.into_inner()) = Some(Proxy { reactor, handler });
-    Ok(())
+    Ok(true)
 }

@@ -29,6 +29,8 @@ pub mod conn;
 #[cfg(target_arch = "wasm32")]
 pub mod http;
 #[cfg(target_arch = "wasm32")]
+pub mod setup_check;
+#[cfg(target_arch = "wasm32")]
 pub mod updater;
 #[cfg(target_arch = "wasm32")]
 pub mod proxy;
@@ -193,7 +195,6 @@ mod plugin {
             if config.backend.forwarding_secret.is_empty() {
                 crate::log::warn("backend.forwarding_secret is empty; Pumpkin will reject logins. Set it in config.toml and pumpkin.toml.");
             }
-            crate::log::info(&crate::color::dim("if players can't join, apply plugins/data/multiversion/pumpkin-settings.txt to pumpkin.toml and restart"));
             *self.config.lock().unwrap() = Some(config.clone());
             // Ask the Market for a newer version now, before the proxy carries any players.
             updater::set_data_folder(&folder);
@@ -222,8 +223,16 @@ mod plugin {
             context.register_event_handler::<PlayerJoinEvent, _>(UpdateNotice, EventPriority::Lowest, false)?;
             // Bind now; then run the proxy loop in short slices, one per server tick, so Pumpkin
             // can still call our other hooks (and unload us on shutdown) in between.
-            crate::proxy::start(config).map_err(|e| format!("multiversion: {e}"))?;
-            context.schedule_repeating_task(1, 1, |_server| crate::proxy::tick());
+            if crate::proxy::start(config.clone()).map_err(|e| format!("multiversion: {e}"))? {
+                context.schedule_repeating_task(1, 1, |_server| crate::proxy::tick());
+            } else {
+                // Pumpkin still holds the public port: this is a first start. Stay loaded and say
+                // what to do, rather than fail with an error.
+                for line in crate::config::setup_message(&config, &crate::config::ALL_NEEDS) {
+                    crate::log::warn(&line);
+                }
+                crate::log::warn("Until then the plugin is idle and only this server's own version can join.");
+            }
             // Bedrock players reach Pumpkin directly; log their version and device the same way.
             context.register_event_handler::<pumpkin_plugin_api::events::PlayerJoinEvent, _>(crate::bedrock_log::JoinLog, pumpkin_plugin_api::events::EventPriority::Lowest, false)?;
             context.register_event_handler::<pumpkin_plugin_api::events::PlayerLeaveEvent, _>(crate::bedrock_log::LeaveLog, pumpkin_plugin_api::events::EventPriority::Lowest, false)?;

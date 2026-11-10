@@ -33,11 +33,11 @@
 
 ## Setup
 
-1. Put `Multiversion.wasm` in your server's `plugins/` folder and start the server once.
-2. The plugin writes `plugins/data/multiversion/pumpkin-settings.txt` with the settings `pumpkin.toml` needs: Pumpkin moves to a local port, forwarding is turned on with a generated secret, the plugin's permissions are pre-approved, and Pumpkin's local link to the plugin skips compression. Plugins can only write their own folder, so this one step is yours: paste them in and restart.
-3. Restart. Players keep connecting to port 25565 as before. Keep port 25566 closed in your firewall.
+1. Put `Multiversion.wasm` in your server's `plugins/` folder and start the server.
+2. The console lists the four lines to change in `pumpkin.toml`, each with the heading it sits under. The same list is saved as `plugins/data/multiversion/pumpkin-settings.txt`.
+3. Stop the server, change those lines in `pumpkin.toml`, and start it again. The console prints `setup check passed`, or lists only the lines that are still wrong.
 
-If a setting is missing, the plugin says exactly which one in the console.
+It is the same on Linux and Windows. Players keep connecting to port 25565 as before; keep port 25566 closed in your firewall. Plugins can only write their own folder, which is why the `pumpkin.toml` edit is yours to make.
 
 ## Configuration
 
