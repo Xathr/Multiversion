@@ -249,7 +249,15 @@ pub const FILE_HEADER: &str = "# multiversion: lets other Minecraft versions joi
 impl Config {
     pub fn load_or_create(path: &str) -> Result<Self, String> {
         match std::fs::read_to_string(path) {
-            Ok(text) => toml::from_str(&text).map_err(|e| format!("{path}: {e}")),
+            Ok(text) => {
+                let cfg: Self = toml::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+                // A file from an older version, or one written by hand, may not list every
+                // setting. Add the ones it lacks so they can all be seen and changed.
+                if let Some(filled) = fill_missing(&text, &cfg) {
+                    let _ = std::fs::write(path, filled);
+                }
+                Ok(cfg)
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let mut cfg = Self::default();
                 cfg.backend.forwarding_secret = crate::crypto::random_token();
@@ -260,6 +268,53 @@ impl Config {
             Err(e) => Err(format!("{path}: {e}")),
         }
     }
+}
+
+/// `text` (a config file) with every setting it does not mention added, at the value in `cfg`.
+/// What is already there, comments and layout included, is left as it is. `None` if nothing is
+/// missing or the text cannot be edited.
+pub fn fill_missing(text: &str, cfg: &Config) -> Option<String> {
+    fn merge(into: &mut toml_edit::Table, from: &toml_edit::Table, changed: &mut bool) {
+        for (key, item) in from.iter() {
+            match into.get_mut(key) {
+                None => {
+                    into.insert(key, item.clone());
+                    *changed = true;
+                }
+                Some(existing) => {
+                    if let (Some(a), Some(b)) = (existing.as_table_mut(), item.as_table()) {
+                        merge(a, b, changed);
+                    }
+                }
+            }
+        }
+    }
+    let mut doc: toml_edit::DocumentMut = text.parse().ok()?;
+    let mut full: toml_edit::DocumentMut = toml::to_string_pretty(cfg).ok()?.parse().ok()?;
+    // Settings outside any section go under the comment that opens the file, not above it.
+    let mut top = String::new();
+    let top_keys: Vec<String> = full.iter().filter(|(_, item)| !item.is_table()).map(|(k, _)| k.to_string()).collect();
+    for key in top_keys {
+        if let Some(item) = full.remove(&key)
+            && !doc.contains_key(&key)
+        {
+            top.push_str(&format!("{key} = {}\n", item.to_string().trim()));
+        }
+    }
+    let mut changed = !top.is_empty();
+    merge(doc.as_table_mut(), full.as_table(), &mut changed);
+    if !changed {
+        return None;
+    }
+    let body = doc.to_string();
+    if top.is_empty() {
+        return Some(body);
+    }
+    let opening: usize = body.lines().take_while(|l| l.trim_start().starts_with('#')).map(|l| l.len() + 1).sum();
+    let opening = opening.min(body.len());
+    let gap = if opening > 0 { "\n" } else { "" };
+    let rest = body[opening..].trim_start_matches('\n');
+    Some(format!("{}{gap}{top}\n{rest}", &body[..opening]))
 }
 
 /// The pumpkin.toml settings this plugin needs, ready to paste. Pumpkin's `online_mode` can stay
@@ -428,5 +483,43 @@ mod snippet_tests {
         assert!(parsed.backend.pumpkin_compression);
         let old: Config = toml::from_str("[backend]\naddress = \"127.0.0.1:1\"\n").unwrap();
         assert!(!old.backend.pumpkin_compression, "configs without the setting turn Pumpkin's compression off");
+    }
+
+    #[test]
+    fn missing_settings_are_added_to_an_existing_file() {
+        let text = "# multiversion settings (players connect to [listen].address).\n\n[listen]\naddress = \"0.0.0.0:25570\"  # my port\n\n[backend]\naddress = \"127.0.0.1:25566\"\nforwarding_secret = \"abc\"\n\n[limits]\nmax_connections = 50\n";
+        let cfg: Config = toml::from_str(text).unwrap();
+        let filled = fill_missing(text, &cfg).expect("settings were missing");
+        // What was there is untouched, comments included.
+        assert!(filled.starts_with("# multiversion settings (players connect to [listen].address).\n\nconsole_colors = true\n\n[listen]\naddress = \"0.0.0.0:25570\"  # my port\n"), "{filled}");
+        // A file with no opening comment, and one that sets the top-level setting itself.
+        assert!(fill_missing("[listen]\naddress = \"0.0.0.0:1\"\n", &cfg).unwrap().starts_with("console_colors = true\n\n[listen]\n"));
+        let own = fill_missing("console_colors = false\n[listen]\naddress = \"0.0.0.0:1\"\n", &Config { console_colors: false, ..Config::default() }).unwrap();
+        assert!(own.starts_with("console_colors = false\n[listen]\n") && own.matches("console_colors").count() == 1, "{own}");
+        // It reads back as the same settings, now all present.
+        let back: Config = toml::from_str(&filled).unwrap();
+        assert_eq!(back.listen.address, "0.0.0.0:25570");
+        assert!(back.console_colors);
+        assert_eq!(back.backend.forwarding_secret, "abc");
+        assert_eq!(back.limits.max_connections, 50);
+        let value: toml::Value = toml::from_str(&filled).unwrap();
+        let full: toml::Value = toml::from_str(&toml::to_string(&Config::default()).unwrap()).unwrap();
+        for (section, keys) in full.as_table().unwrap() {
+            match keys.as_table() {
+                Some(keys) => {
+                    for key in keys.keys() {
+                        assert!(value[section].get(key).is_some(), "{section}.{key} is in the file");
+                    }
+                }
+                None => assert!(value.get(section).is_some(), "{section} is in the file"),
+            }
+        }
+        // Keys added to a section that was already there sit in that section.
+        assert!(filled.contains("[limits]\nmax_connections = 50\n"));
+        assert_eq!(back.limits.max_connections_per_ip_per_10s, 40);
+        assert!(back.updates.check);
+        // A complete file is left alone.
+        assert!(fill_missing(&filled, &back).is_none());
+        assert!(fill_missing("not [toml", &cfg).is_none());
     }
 }

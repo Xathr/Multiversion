@@ -202,7 +202,8 @@ errors = true
 debug = false                      # every connection step; turn on when someone can't join
 ```
 
-Settings missing from an older config file use the defaults above. Restart after editing.
+When the plugin starts it adds any setting your file does not list, at its default, and leaves
+what is already there (comments included) as it is. Restart after editing.
 
 Clients on versions without a translator see the server as incompatible in the server list and get
 the kick message if they try anyway.
