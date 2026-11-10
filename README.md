@@ -26,6 +26,14 @@ runs inside the server, as a WebAssembly plugin, configured by one `config.toml`
 | 1.20.3 / 1.20.4 (protocol 765) | translated |
 | 1.20.2 (protocol 764) | translated |
 | 1.20 / 1.20.1 (protocol 763) | translated (the plugin goes through configuration for them) |
+| 1.19.4 (protocol 762) | translated |
+| 1.19.3 (protocol 761) | translated |
+| 1.19.1 / 1.19.2 (protocol 760) | translated (chat is unsigned, see below) |
+| 1.19 (protocol 759) | translated (chat is unsigned, see below) |
+
+1.19 to 1.19.2 sign chat in a way newer versions cannot check, so those players' messages reach
+the server unsigned and other players' chat reaches them as plain server messages (no reporting,
+no "hide this player's messages"). They cannot chat on a server that enforces secure chat.
 
 Content an older client doesn't have shows as its nearest equivalent: new mobs as similar old mobs,
 new items and blocks as similar old ones. Translation has been checked with unit tests on hand-built
@@ -53,7 +61,7 @@ player (26.2) ──► plugin listener :25565 ──► translator chain ──
    verified profile, signed with the shared secret. Pumpkin's built-in Velocity forwarding verifies
    it, so players keep their real UUID, skin and IP and nobody can forge an identity.
 3. **Translation.** Configuration and play packets go through a chain of per-version translators
-   (26.3→26.2→26.1→…→1.21→1.20.5→1.20.3→1.20.2→1.20), each converting one version step. Registry id tables (blocks, items,
+   (26.3→26.2→26.1→…→1.21→1.20.5→1.20.3→1.20.2→1.20→1.19.4→1.19.3→1.19.1→1.19), each converting one version step. Registry id tables (blocks, items,
    entities, sounds, particles, data components, argument types) are generated from per-version
    registry mapping data; structural changes follow the vanilla protocol differences between steps.
 
@@ -176,13 +184,13 @@ session_server = "https://sessionserver.mojang.com"
 prevent_proxy_connections = false  # pass the client IP to Mojang
 
 [status]
-version_name = ""                  # server-list text; empty = the allowed range, e.g. "1.20-26.3"
+version_name = ""                  # server-list text; empty = the allowed range, e.g. "1.19-26.3"
 
 [versions]
 allow = ["*"]                      # default: every version the plugin can translate
 deny = []                          # refused even if allowed above
 # Entries: a version "1.21.4", a family "1.21.*", or a range "1.21.5-26.3" (either end optional).
-# Patch releases that share a protocol count as one: 1.20.1 = 1.20, 1.20.4 = 1.20.3, 1.20.6 = 1.20.5,
+# Patch releases that share a protocol count as one: 1.19.2 = 1.19.1, 1.20.1 = 1.20, 1.20.4 = 1.20.3, 1.20.6 = 1.20.5,
 # 1.21.1 = 1.21, 1.21.3 = 1.21.2, 1.21.8 = 1.21.7, 1.21.10 = 1.21.9. Example: allow = ["1.21.*", "26.3"], deny = ["1.21"].
 kick_unsupported_message = "This server supports Minecraft {versions}. You are on {client}."
 
@@ -287,6 +295,15 @@ exercised against a debug Pumpkin build with a scripted client (`status`, offlin
 online-mode login with RSA/AES against a stand-in session server) for both 26.3 and 26.2: login,
 configuration, and the first few hundred play packets translate without errors. A real 26.2 client
 has not been connected yet; see the main README for status.
+
+## Sources
+
+- Registry id tables (`src/translate/data_*.rs`) are generated from the per-version mapping
+  files of the [ViaVersion Mappings](https://github.com/ViaVersion/Mappings) project.
+- The version steps follow the same changes [ViaBackwards](https://github.com/ViaVersion/ViaBackwards)
+  makes between each pair of versions, written again in Rust; both projects are GPL-3.0, as this
+  one is.
+- Packet layouts were checked against [minecraft-data](https://github.com/PrismarineJS/minecraft-data).
 
 ## Licence
 

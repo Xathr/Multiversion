@@ -243,7 +243,7 @@ pub const FILE_HEADER: &str = "# multiversion: lets other Minecraft versions joi
 # [versions] chooses who may join. Entries are a version (\"1.21.4\"), a family (\"1.21.*\") or a\n\
 # range (\"1.21.5-26.3\"). allow = [\"*\"] (the default) or [] means every version the plugin can\n\
 # translate; deny wins over\n\
-# allow. Versions that share a protocol count as one: 1.20.1 = 1.20, 1.20.4 = 1.20.3, 1.20.6 = 1.20.5, 1.21.1 = 1.21,\n\
+# allow. Versions that share a protocol count as one: 1.19.2 = 1.19.1, 1.20.1 = 1.20, 1.20.4 = 1.20.3, 1.20.6 = 1.20.5, 1.21.1 = 1.21,\n\
 # 1.21.3 = 1.21.2, 1.21.8 = 1.21.7, 1.21.10 = 1.21.9. Example: allow = [\"1.21.*\", \"26.3\"], deny = [\"1.21\"].\n\n";
 
 impl Config {
@@ -421,7 +421,7 @@ impl Versions {
 }
 
 /// Resolves a version name, including names of releases that share a protocol with a listed one
-/// (1.20.1 -> 1.20, 1.20.4 -> 1.20.3, 1.20.6 -> 1.20.5, 1.21.1 -> 1.21, 1.21.3 -> 1.21.2, 1.21.8 -> 1.21.7, 1.21.10 -> 1.21.9).
+/// (1.19.2 -> 1.19.1, 1.20.1 -> 1.20, 1.20.4 -> 1.20.3, 1.20.6 -> 1.20.5, 1.21.1 -> 1.21, 1.21.3 -> 1.21.2, 1.21.8 -> 1.21.7, 1.21.10 -> 1.21.9).
 fn resolve(name: &str) -> Option<crate::proto::version::Version> {
     use crate::proto::version::Version;
     let name = name.trim().trim_start_matches("minecraft ").trim_start_matches('v');
@@ -486,6 +486,8 @@ mod version_selector_tests {
         assert!(selector_matches("1.20.6", v("1.20.5")));
         assert!(selector_matches("1.20.4", v("1.20.3")));
         assert!(selector_matches("1.20.1", v("1.20")));
+        assert!(selector_matches("1.19.2", v("1.19.1")));
+        assert!(selector_matches("1.19.*", v("1.19.4")) && selector_matches("1.19.*", v("1.19")));
         assert!(selector_matches("1.21.10", v("1.21.9")));
         assert!(!selector_matches("bogus", v("26.3")));
     }
