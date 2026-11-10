@@ -382,17 +382,13 @@ impl Connection {
         if id != ids::LOGIN_S_HELLO {
             return Err("expected login start".into());
         }
-        let mut r = Reader::new(payload);
-        let name = r.string_max(16).map_err(|e| e.to_string())?.to_string();
+        let start = login::parse_login_start(self.client_version.protocol, payload).map_err(|e| e.to_string())?;
+        let name = start.name.to_string();
         if name.is_empty() || name.len() > 16 || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return Err("Invalid characters in username".into());
         }
-        // 1.20.2+: uuid; 1.20/1.20.1: optional uuid.
-        let uuid = if self.client_version.protocol >= 764 {
-            r.uuid().map_err(|e| e.to_string())?
-        } else {
-            r.option(|r| r.uuid()).map_err(|e| e.to_string())?.unwrap_or_else(|| offline_uuid(&name))
-        };
+        // Only shown in the console: the uuid players get comes from Mojang or their name.
+        let uuid = start.uuid.unwrap_or_else(|| offline_uuid(&name));
         self.username = name.clone();
         self.client_uuid = uuid;
         let online = shared.config.auth.online_mode;
@@ -414,17 +410,21 @@ impl Connection {
         if id != ids::LOGIN_S_KEY {
             return Err("expected encryption response".into());
         }
-        let mut r = Reader::new(payload);
-        let enc_secret = r.byte_array().map_err(|e| e.to_string())?;
-        let enc_token = r.byte_array().map_err(|e| e.to_string())?;
+        let (enc_secret, enc_token) = login::parse_encryption_response(self.client_version.protocol, payload).map_err(|e| e.to_string())?;
         // One answer for every way this can fail. Telling a client whether the RSA padding, the
         // token or the key length was wrong would let it probe the server key one guess at a time.
         const FAILED: &str = "Encryption failed";
         let secret = shared.keys.decrypt(enc_secret).map_err(|_| FAILED)?;
-        let token = shared.keys.decrypt(enc_token).map_err(|_| FAILED)?;
         let key: [u8; 16] = secret[..].try_into().map_err(|_| FAILED)?;
-        if token != self.verify_token {
-            return Err(FAILED.into());
+        // A 1.19 to 1.19.2 client with a chat key signs the token instead of encrypting it, to
+        // prove it owns that key. The key is not used here (those clients' chat goes unsigned), so
+        // there is nothing to check; who the player is still rests on the session check with
+        // Mojang below, which is tied to this shared secret.
+        if let Some(enc_token) = enc_token {
+            let token = shared.keys.decrypt(enc_token).map_err(|_| FAILED)?;
+            if token != self.verify_token {
+                return Err(FAILED.into());
+            }
         }
         self.client_in.enable_encryption(key);
         self.client_out.enable_encryption(key);

@@ -19,6 +19,7 @@ pub mod data_1_20_5;
 pub mod data_1_20_3;
 pub mod data_1_20_2;
 pub mod data_1_20;
+pub mod data_1_19_4;
 pub mod v26_2;
 pub mod v26_1;
 pub mod v1_21;
@@ -33,6 +34,7 @@ pub mod v1_20_5;
 pub mod v1_20_3;
 pub mod v1_20_2;
 pub mod v1_20;
+pub mod v1_19_4;
 #[cfg(test)]
 mod fuzz_tests;
 
@@ -197,6 +199,7 @@ fn make_step(from: Version) -> Option<Box<dyn Translator>> {
         766 => Some(Box::new(v1_20_3::V1_20_5To1_20_3::new())),
         765 => Some(Box::new(v1_20_2::V1_20_3To1_20_2::new())),
         764 => Some(Box::new(v1_20::V1_20_2To1_20::new())),
+        763 => Some(Box::new(v1_19_4::V1_20To1_19_4::new())),
         _ => None,
     }
 }
@@ -592,7 +595,9 @@ mod support_tests {
             assert_eq!(is_supported(v), Chain::for_client(v).is_some(), "{}", k.name);
         }
         assert!(is_supported(BACKEND));
-        assert!(!is_supported(Version { protocol: 762 }));
+        // The protocol below the oldest known version has no translator.
+        let oldest = KNOWN.iter().map(|k| k.protocol).min().unwrap();
+        assert!(!is_supported(Version { protocol: oldest - 1 }));
         let range = allowed_range(&crate::config::Versions::default());
         if !is_supported(Version { protocol: 765 }) {
             assert!(!is_supported(Version { protocol: 764 }), "1.20.2 needs the 1.20.3 step's newer neighbour");
@@ -672,8 +677,9 @@ mod block_state_coverage {
         }
         assert!(stone.is_empty(), "states shown as stone: {stone:?}");
         assert!(super::is_supported(Version { protocol: 765 }));
-        assert_eq!(super::supported_range(), "1.20-26.3");
-        assert_eq!(super::allowed_range(&crate::config::Versions::default()), "1.20-26.3");
+        let oldest = super::KNOWN.iter().min_by_key(|k| k.protocol).unwrap().name;
+        assert_eq!(super::supported_range(), format!("{oldest}-26.3"));
+        assert_eq!(super::allowed_range(&crate::config::Versions::default()), format!("{oldest}-26.3"));
     }
 }
 #[cfg(test)]
