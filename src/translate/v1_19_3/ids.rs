@@ -1,0 +1,156 @@
+//! Packet ids for 1.19.4 (protocol 762, server side of this step) and 1.19.3 (protocol 761).
+//! Source: the vanilla packet lists for both versions (position = id).
+//!
+//! 1.19.4 added BUNDLE_DELIMITER, CHUNKS_BIOMES, DAMAGE_EVENT and HURT_ANIMATION, and moved the
+//! serverbound CHAT_SESSION_UPDATE from 32 up to 6.
+
+pub mod new {
+    // clientbound play (1.19.4)
+    pub const BUNDLE_DELIMITER: i32 = 0;
+    pub const ADD_ENTITY: i32 = 1;
+    pub const AWARD_STATS: i32 = 5;
+    pub const BLOCK_ENTITY_DATA: i32 = 8;
+    pub const BLOCK_EVENT: i32 = 9;
+    pub const BLOCK_UPDATE: i32 = 10;
+    pub const CHUNKS_BIOMES: i32 = 13;
+    pub const COMMANDS: i32 = 16;
+    pub const CONTAINER_SET_CONTENT: i32 = 18;
+    pub const CONTAINER_SET_SLOT: i32 = 20;
+    pub const COOLDOWN: i32 = 21;
+    pub const DAMAGE_EVENT: i32 = 24;
+    pub const HURT_ANIMATION: i32 = 33;
+    pub const LEVEL_CHUNK_WITH_LIGHT: i32 = 36;
+    pub const LEVEL_EVENT: i32 = 37;
+    pub const LEVEL_PARTICLES: i32 = 38;
+    pub const LOGIN: i32 = 40;
+    pub const MERCHANT_OFFERS: i32 = 42;
+    pub const OPEN_SCREEN: i32 = 48;
+    pub const PLAYER_POSITION: i32 = 60;
+    pub const REMOVE_ENTITIES: i32 = 62;
+    pub const RESPAWN: i32 = 65;
+    pub const SECTION_BLOCKS_UPDATE: i32 = 67;
+    pub const SERVER_DATA: i32 = 69;
+    pub const SET_ENTITY_DATA: i32 = 82;
+    pub const SET_EQUIPMENT: i32 = 85;
+    pub const SOUND_ENTITY: i32 = 97;
+    pub const SOUND: i32 = 98;
+    pub const STOP_SOUND: i32 = 99;
+    pub const UPDATE_ADVANCEMENTS: i32 = 105;
+    pub const UPDATE_RECIPES: i32 = 109;
+    pub const UPDATE_TAGS: i32 = 110;
+    // serverbound play (1.19.4)
+    pub const S_CONTAINER_CLOSE: i32 = 12;
+}
+
+pub mod old {
+    // clientbound play (1.19.3)
+    pub const ADD_ENTITY: i32 = 0;
+    pub const ANIMATE: i32 = 3;
+    pub const ENTITY_EVENT: i32 = 25;
+    pub const SET_ENTITY_DATA: i32 = 78;
+    // serverbound play (1.19.3)
+    pub const S_CONTAINER_CLICK: i32 = 10;
+    pub const S_SET_CREATIVE_MODE_SLOT: i32 = 43;
+}
+
+/// Clientbound play id 1.19.4 → 1.19.3. `None` = the 1.19.3 client has no such packet.
+pub fn play_clientbound(id: i32) -> Option<i32> {
+    match id {
+        1..=12 => Some(id - 1),   // after BUNDLE_DELIMITER
+        14..=23 => Some(id - 2),  // after CHUNKS_BIOMES
+        25..=32 => Some(id - 3),  // after DAMAGE_EVENT
+        34..=110 => Some(id - 4), // after HURT_ANIMATION
+        _ => None,
+    }
+}
+
+/// Serverbound play id 1.19.3 → 1.19.4.
+pub fn play_serverbound(id: i32) -> Option<i32> {
+    match id {
+        0..=5 | 33..=50 => Some(id),
+        6..=31 => Some(id + 1), // CHAT_SESSION_UPDATE sits at 6 in 1.19.4
+        32 => Some(6),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Packet lists in id order (ViaVersion's ClientboundPackets1_19_4 / 1_19_3 and
+    // ServerboundPackets1_19_4 / 1_19_3, under their vanilla names).
+    const C_NEW: &[&str] = &["BUNDLE_DELIMITER", "ADD_ENTITY", "ADD_EXPERIENCE_ORB", "ADD_PLAYER", "ANIMATE", "AWARD_STATS", "BLOCK_CHANGED_ACK", "BLOCK_DESTRUCTION", "BLOCK_ENTITY_DATA", "BLOCK_EVENT", "BLOCK_UPDATE", "BOSS_EVENT", "CHANGE_DIFFICULTY", "CHUNKS_BIOMES", "CLEAR_TITLES", "COMMAND_SUGGESTIONS", "COMMANDS", "CONTAINER_CLOSE", "CONTAINER_SET_CONTENT", "CONTAINER_SET_DATA", "CONTAINER_SET_SLOT", "COOLDOWN", "CUSTOM_CHAT_COMPLETIONS", "CUSTOM_PAYLOAD", "DAMAGE_EVENT", "DELETE_CHAT", "DISCONNECT", "DISGUISED_CHAT", "ENTITY_EVENT", "EXPLODE", "FORGET_LEVEL_CHUNK", "GAME_EVENT", "HORSE_SCREEN_OPEN", "HURT_ANIMATION", "INITIALIZE_BORDER", "KEEP_ALIVE", "LEVEL_CHUNK_WITH_LIGHT", "LEVEL_EVENT", "LEVEL_PARTICLES", "LIGHT_UPDATE", "LOGIN", "MAP_ITEM_DATA", "MERCHANT_OFFERS", "MOVE_ENTITY_POS", "MOVE_ENTITY_POS_ROT", "MOVE_ENTITY_ROT", "MOVE_VEHICLE", "OPEN_BOOK", "OPEN_SCREEN", "OPEN_SIGN_EDITOR", "PING", "PLACE_GHOST_RECIPE", "PLAYER_ABILITIES", "PLAYER_CHAT", "PLAYER_COMBAT_END", "PLAYER_COMBAT_ENTER", "PLAYER_COMBAT_KILL", "PLAYER_INFO_REMOVE", "PLAYER_INFO_UPDATE", "PLAYER_LOOK_AT", "PLAYER_POSITION", "RECIPE", "REMOVE_ENTITIES", "REMOVE_MOB_EFFECT", "RESOURCE_PACK", "RESPAWN", "ROTATE_HEAD", "SECTION_BLOCKS_UPDATE", "SELECT_ADVANCEMENTS_TAB", "SERVER_DATA", "SET_ACTION_BAR_TEXT", "SET_BORDER_CENTER", "SET_BORDER_LERP_SIZE", "SET_BORDER_SIZE", "SET_BORDER_WARNING_DELAY", "SET_BORDER_WARNING_DISTANCE", "SET_CAMERA", "SET_CARRIED_ITEM", "SET_CHUNK_CACHE_CENTER", "SET_CHUNK_CACHE_RADIUS", "SET_DEFAULT_SPAWN_POSITION", "SET_DISPLAY_OBJECTIVE", "SET_ENTITY_DATA", "SET_ENTITY_LINK", "SET_ENTITY_MOTION", "SET_EQUIPMENT", "SET_EXPERIENCE", "SET_HEALTH", "SET_OBJECTIVE", "SET_PASSENGERS", "SET_PLAYER_TEAM", "SET_SCORE", "SET_SIMULATION_DISTANCE", "SET_SUBTITLE_TEXT", "SET_TIME", "SET_TITLE_TEXT", "SET_TITLES_ANIMATION", "SOUND_ENTITY", "SOUND", "STOP_SOUND", "SYSTEM_CHAT", "TAB_LIST", "TAG_QUERY", "TAKE_ITEM_ENTITY", "TELEPORT_ENTITY", "UPDATE_ADVANCEMENTS", "UPDATE_ATTRIBUTES", "UPDATE_ENABLED_FEATURES", "UPDATE_MOB_EFFECT", "UPDATE_RECIPES", "UPDATE_TAGS"];
+    const C_OLD: &[&str] = &["ADD_ENTITY", "ADD_EXPERIENCE_ORB", "ADD_PLAYER", "ANIMATE", "AWARD_STATS", "BLOCK_CHANGED_ACK", "BLOCK_DESTRUCTION", "BLOCK_ENTITY_DATA", "BLOCK_EVENT", "BLOCK_UPDATE", "BOSS_EVENT", "CHANGE_DIFFICULTY", "CLEAR_TITLES", "COMMAND_SUGGESTIONS", "COMMANDS", "CONTAINER_CLOSE", "CONTAINER_SET_CONTENT", "CONTAINER_SET_DATA", "CONTAINER_SET_SLOT", "COOLDOWN", "CUSTOM_CHAT_COMPLETIONS", "CUSTOM_PAYLOAD", "DELETE_CHAT", "DISCONNECT", "DISGUISED_CHAT", "ENTITY_EVENT", "EXPLODE", "FORGET_LEVEL_CHUNK", "GAME_EVENT", "HORSE_SCREEN_OPEN", "INITIALIZE_BORDER", "KEEP_ALIVE", "LEVEL_CHUNK_WITH_LIGHT", "LEVEL_EVENT", "LEVEL_PARTICLES", "LIGHT_UPDATE", "LOGIN", "MAP_ITEM_DATA", "MERCHANT_OFFERS", "MOVE_ENTITY_POS", "MOVE_ENTITY_POS_ROT", "MOVE_ENTITY_ROT", "MOVE_VEHICLE", "OPEN_BOOK", "OPEN_SCREEN", "OPEN_SIGN_EDITOR", "PING", "PLACE_GHOST_RECIPE", "PLAYER_ABILITIES", "PLAYER_CHAT", "PLAYER_COMBAT_END", "PLAYER_COMBAT_ENTER", "PLAYER_COMBAT_KILL", "PLAYER_INFO_REMOVE", "PLAYER_INFO_UPDATE", "PLAYER_LOOK_AT", "PLAYER_POSITION", "RECIPE", "REMOVE_ENTITIES", "REMOVE_MOB_EFFECT", "RESOURCE_PACK", "RESPAWN", "ROTATE_HEAD", "SECTION_BLOCKS_UPDATE", "SELECT_ADVANCEMENTS_TAB", "SERVER_DATA", "SET_ACTION_BAR_TEXT", "SET_BORDER_CENTER", "SET_BORDER_LERP_SIZE", "SET_BORDER_SIZE", "SET_BORDER_WARNING_DELAY", "SET_BORDER_WARNING_DISTANCE", "SET_CAMERA", "SET_CARRIED_ITEM", "SET_CHUNK_CACHE_CENTER", "SET_CHUNK_CACHE_RADIUS", "SET_DEFAULT_SPAWN_POSITION", "SET_DISPLAY_OBJECTIVE", "SET_ENTITY_DATA", "SET_ENTITY_LINK", "SET_ENTITY_MOTION", "SET_EQUIPMENT", "SET_EXPERIENCE", "SET_HEALTH", "SET_OBJECTIVE", "SET_PASSENGERS", "SET_PLAYER_TEAM", "SET_SCORE", "SET_SIMULATION_DISTANCE", "SET_SUBTITLE_TEXT", "SET_TIME", "SET_TITLE_TEXT", "SET_TITLES_ANIMATION", "SOUND_ENTITY", "SOUND", "STOP_SOUND", "SYSTEM_CHAT", "TAB_LIST", "TAG_QUERY", "TAKE_ITEM_ENTITY", "TELEPORT_ENTITY", "UPDATE_ADVANCEMENTS", "UPDATE_ATTRIBUTES", "UPDATE_ENABLED_FEATURES", "UPDATE_MOB_EFFECT", "UPDATE_RECIPES", "UPDATE_TAGS"];
+    const S_NEW: &[&str] = &["ACCEPT_TELEPORTATION", "BLOCK_ENTITY_TAG_QUERY", "CHANGE_DIFFICULTY", "CHAT_ACK", "CHAT_COMMAND", "CHAT", "CHAT_SESSION_UPDATE", "CLIENT_COMMAND", "CLIENT_INFORMATION", "COMMAND_SUGGESTION", "CONTAINER_BUTTON_CLICK", "CONTAINER_CLICK", "CONTAINER_CLOSE", "CUSTOM_PAYLOAD", "EDIT_BOOK", "ENTITY_TAG_QUERY", "INTERACT", "JIGSAW_GENERATE", "KEEP_ALIVE", "LOCK_DIFFICULTY", "MOVE_PLAYER_POS", "MOVE_PLAYER_POS_ROT", "MOVE_PLAYER_ROT", "MOVE_PLAYER_STATUS_ONLY", "MOVE_VEHICLE", "PADDLE_BOAT", "PICK_ITEM", "PLACE_RECIPE", "PLAYER_ABILITIES", "PLAYER_ACTION", "PLAYER_COMMAND", "PLAYER_INPUT", "PONG", "RECIPE_BOOK_CHANGE_SETTINGS", "RECIPE_BOOK_SEEN_RECIPE", "RENAME_ITEM", "RESOURCE_PACK", "SEEN_ADVANCEMENTS", "SELECT_TRADE", "SET_BEACON", "SET_CARRIED_ITEM", "SET_COMMAND_BLOCK", "SET_COMMAND_MINECART", "SET_CREATIVE_MODE_SLOT", "SET_JIGSAW_BLOCK", "SET_STRUCTURE_BLOCK", "SIGN_UPDATE", "SWING", "TELEPORT_TO_ENTITY", "USE_ITEM_ON", "USE_ITEM"];
+    const S_OLD: &[&str] = &["ACCEPT_TELEPORTATION", "BLOCK_ENTITY_TAG_QUERY", "CHANGE_DIFFICULTY", "CHAT_ACK", "CHAT_COMMAND", "CHAT", "CLIENT_COMMAND", "CLIENT_INFORMATION", "COMMAND_SUGGESTION", "CONTAINER_BUTTON_CLICK", "CONTAINER_CLICK", "CONTAINER_CLOSE", "CUSTOM_PAYLOAD", "EDIT_BOOK", "ENTITY_TAG_QUERY", "INTERACT", "JIGSAW_GENERATE", "KEEP_ALIVE", "LOCK_DIFFICULTY", "MOVE_PLAYER_POS", "MOVE_PLAYER_POS_ROT", "MOVE_PLAYER_ROT", "MOVE_PLAYER_STATUS_ONLY", "MOVE_VEHICLE", "PADDLE_BOAT", "PICK_ITEM", "PLACE_RECIPE", "PLAYER_ABILITIES", "PLAYER_ACTION", "PLAYER_COMMAND", "PLAYER_INPUT", "PONG", "CHAT_SESSION_UPDATE", "RECIPE_BOOK_CHANGE_SETTINGS", "RECIPE_BOOK_SEEN_RECIPE", "RENAME_ITEM", "RESOURCE_PACK", "SEEN_ADVANCEMENTS", "SELECT_TRADE", "SET_BEACON", "SET_CARRIED_ITEM", "SET_COMMAND_BLOCK", "SET_COMMAND_MINECART", "SET_CREATIVE_MODE_SLOT", "SET_JIGSAW_BLOCK", "SET_STRUCTURE_BLOCK", "SIGN_UPDATE", "SWING", "TELEPORT_TO_ENTITY", "USE_ITEM_ON", "USE_ITEM"];
+
+    fn id(list: &[&str], name: &str) -> i32 {
+        list.iter().position(|n| *n == name).unwrap_or_else(|| panic!("{name}")) as i32
+    }
+
+    /// Every packet maps to the one with the same name, and only packets the other side lacks
+    /// have no mapping.
+    #[test]
+    fn id_maps_follow_the_packet_lists() {
+        assert_eq!((C_NEW.len(), C_OLD.len(), S_NEW.len(), S_OLD.len()), (111, 107, 51, 51));
+        for (i, name) in C_NEW.iter().enumerate() {
+            assert_eq!(play_clientbound(i as i32), C_OLD.iter().position(|n| n == name).map(|p| p as i32), "clientbound {name}");
+        }
+        assert_eq!(play_clientbound(C_NEW.len() as i32), None);
+        assert_eq!(play_clientbound(-1), None);
+        for (i, name) in S_OLD.iter().enumerate() {
+            assert_eq!(play_serverbound(i as i32), Some(id(S_NEW, name)), "serverbound {name}");
+        }
+        assert_eq!(play_serverbound(S_OLD.len() as i32), None);
+        assert_eq!(play_serverbound(-1), None);
+    }
+
+    #[test]
+    fn named_ids_match_the_lists() {
+        let c_new = [
+            (new::BUNDLE_DELIMITER, "BUNDLE_DELIMITER"),
+            (new::ADD_ENTITY, "ADD_ENTITY"),
+            (new::AWARD_STATS, "AWARD_STATS"),
+            (new::BLOCK_ENTITY_DATA, "BLOCK_ENTITY_DATA"),
+            (new::BLOCK_EVENT, "BLOCK_EVENT"),
+            (new::BLOCK_UPDATE, "BLOCK_UPDATE"),
+            (new::CHUNKS_BIOMES, "CHUNKS_BIOMES"),
+            (new::COMMANDS, "COMMANDS"),
+            (new::CONTAINER_SET_CONTENT, "CONTAINER_SET_CONTENT"),
+            (new::CONTAINER_SET_SLOT, "CONTAINER_SET_SLOT"),
+            (new::COOLDOWN, "COOLDOWN"),
+            (new::DAMAGE_EVENT, "DAMAGE_EVENT"),
+            (new::HURT_ANIMATION, "HURT_ANIMATION"),
+            (new::LEVEL_CHUNK_WITH_LIGHT, "LEVEL_CHUNK_WITH_LIGHT"),
+            (new::LEVEL_EVENT, "LEVEL_EVENT"),
+            (new::LEVEL_PARTICLES, "LEVEL_PARTICLES"),
+            (new::LOGIN, "LOGIN"),
+            (new::MERCHANT_OFFERS, "MERCHANT_OFFERS"),
+            (new::OPEN_SCREEN, "OPEN_SCREEN"),
+            (new::PLAYER_POSITION, "PLAYER_POSITION"),
+            (new::REMOVE_ENTITIES, "REMOVE_ENTITIES"),
+            (new::RESPAWN, "RESPAWN"),
+            (new::SECTION_BLOCKS_UPDATE, "SECTION_BLOCKS_UPDATE"),
+            (new::SERVER_DATA, "SERVER_DATA"),
+            (new::SET_ENTITY_DATA, "SET_ENTITY_DATA"),
+            (new::SET_EQUIPMENT, "SET_EQUIPMENT"),
+            (new::SOUND_ENTITY, "SOUND_ENTITY"),
+            (new::SOUND, "SOUND"),
+            (new::STOP_SOUND, "STOP_SOUND"),
+            (new::UPDATE_ADVANCEMENTS, "UPDATE_ADVANCEMENTS"),
+            (new::UPDATE_RECIPES, "UPDATE_RECIPES"),
+            (new::UPDATE_TAGS, "UPDATE_TAGS"),
+        ];
+        for (v, name) in c_new {
+            assert_eq!(v, id(C_NEW, name), "{name}");
+        }
+        for (v, name) in [(old::ADD_ENTITY, "ADD_ENTITY"), (old::ANIMATE, "ANIMATE"), (old::ENTITY_EVENT, "ENTITY_EVENT"), (old::SET_ENTITY_DATA, "SET_ENTITY_DATA")] {
+            assert_eq!(v, id(C_OLD, name), "{name}");
+        }
+        assert_eq!(new::S_CONTAINER_CLOSE, id(S_NEW, "CONTAINER_CLOSE"));
+        for (v, name) in [(old::S_CONTAINER_CLICK, "CONTAINER_CLICK"), (old::S_SET_CREATIVE_MODE_SLOT, "SET_CREATIVE_MODE_SLOT")] {
+            assert_eq!(v, id(S_OLD, name), "{name}");
+        }
+    }
+}
