@@ -17,7 +17,7 @@ use crate::proto::buf::{DecodeError, Reader, Result, Writer};
 use crate::proto::nbt::{self, Tag};
 
 /// Root NBT key holding the server's (1.20.5) item: `{id: int, c: byte array (component patch)}`.
-pub const BACKUP_KEY: &str = "mineversed:v1_20_5";
+pub const BACKUP_KEY: &str = "multiversion:v1_20_5";
 
 fn err(msg: &str) -> DecodeError {
     DecodeError::Other(msg.to_string())

@@ -32,7 +32,7 @@ pub enum Reg {
 }
 
 /// custom_data key holding the 1.21.2 data a 1.21 client cannot keep.
-pub const BACKUP_KEY: &str = "mineversed:v1_21_2";
+pub const BACKUP_KEY: &str = "multiversion:v1_21_2";
 
 /// 1.21.2 components with no 1.21 equivalent.
 const DROPPED: &[&str] = &[

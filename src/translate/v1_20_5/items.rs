@@ -30,7 +30,7 @@ pub enum Reg {
 }
 
 /// custom_data key holding the 1.21 data a 1.20.5 client cannot keep.
-pub const BACKUP_KEY: &str = "mineversed:v1_21";
+pub const BACKUP_KEY: &str = "multiversion:v1_21";
 
 fn err(msg: &str) -> DecodeError {
     DecodeError::Other(msg.to_string())

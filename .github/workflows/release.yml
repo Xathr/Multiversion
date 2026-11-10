@@ -65,7 +65,7 @@ jobs:
             cat changes.md
             echo "## Install"
             echo
-            echo "Put \`Multiversion.wasm\` in \`plugins/\` and restart. The Mineversed panel sets up \`pumpkin.toml\` for you; without it, copy \`plugins/data/multiversion/pumpkin-settings.txt\` into \`pumpkin.toml\`."
+            echo "Put \`Multiversion.wasm\` in \`plugins/\` and restart, then copy the settings in \`plugins/data/multiversion/pumpkin-settings.txt\` into \`pumpkin.toml\` and restart again."
           } > release-notes.md
           gh release create "$TAG" --target "$GITHUB_SHA" target/wasm32-wasip2/release/Multiversion.wasm target/wasm32-wasip2/release/Multiversion.wasm.sha256 \
             --title "multiversion $TAG" --notes-file release-notes.md
