@@ -20,7 +20,15 @@ def apply_materials(name):
     """Diff "materials": rename a wood/material family, e.g. poplar_planks -> birch_planks."""
     for mat, repl in D.get("materials", {}).items():
         if re.search(rf"(^|_){mat}(_|$)", name):
-            return re.sub(rf"(^|_){mat}(_|$)", lambda m: m.group(1) + repl + m.group(2), name)
+            # Older diffs give {"to": ..., "words": {...}}: other words to swap in the same name
+            # (bamboo_block -> birch_wood, bamboo_raft -> birch_boat).
+            words = {}
+            if isinstance(repl, dict):
+                repl, words = repl["to"], repl.get("words", {})
+            out = re.sub(rf"(^|_){mat}(_|$)", lambda m: m.group(1) + repl + m.group(2), name)
+            for word, other in words.items():
+                out = re.sub(rf"(^|_){word}(_|$)", lambda m: m.group(1) + other + m.group(2), out)
+            return out
     return None
 
 def parse_state(name):
@@ -178,7 +186,8 @@ for name, key in [("ITEMS", "items"), ("BLOCKS", "blocks"), ("ENTITIES", "entiti
 if has_components:
     sections.append("pub static OLD_COMPONENT_NAMES: [&str; %d] = [%s];" % (len(O["data_component_type"]), ",".join(json.dumps(n) for n in O["data_component_type"])))
 sections.append("pub const BRICK_ITEM_NEW: u32 = %d;\npub const BRICK_ITEM_OLD: u32 = %d;" % (N["items"].index("brick"), O["items"].index("brick")))
-sections.append("pub const TEXT_DISPLAY_ENTITY_OLD: u32 = %d;\npub const FALLING_BLOCK_ENTITY_OLD: u32 = %d;" % (O["entities"].index("text_display"), O["entities"].index("falling_block")))
+# Versions before 1.19.4 have no display entities; an armor stand stands in.
+sections.append("pub const TEXT_DISPLAY_ENTITY_OLD: u32 = %d;\npub const FALLING_BLOCK_ENTITY_OLD: u32 = %d;" % (O["entities"].index("text_display" if "text_display" in O["entities"] else "armor_stand"), O["entities"].index("falling_block")))
 if "cushion" in N["entities"]:
     sections.append("pub const CUSHION_ENTITY_NEW: u32 = %d;" % N["entities"].index("cushion"))
 # Names of every registry in both versions, so each step can look ids up by name.
