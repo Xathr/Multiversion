@@ -65,7 +65,8 @@ impl V26_3To26_2 {
                 // Already made in the first round; making them again would change the result.
                 repairs.retain(|r| r.settles);
             }
-            if !carries_items || repairs.is_empty() {
+            // A painting's spawn position is corrected too (see `entity::painting_anchor`).
+            if !(carries_items || pkt.id == new::ADD_ENTITY) || repairs.is_empty() {
                 break;
             }
             payload = Some(apply_repairs(&current.payload, repairs)?);

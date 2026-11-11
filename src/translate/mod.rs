@@ -860,6 +860,39 @@ mod placed_painting {
     use super::*;
     use crate::proto::buf::{Reader, Writer};
 
+    /// A 2x2 painting facing south: Pumpkin sends its centre, every client gets the block it hangs on.
+    #[test]
+    fn painting_spawn_position_is_the_anchor_block_for_every_client() {
+        let painting = data_26_2::NEW_ENTITY_NAMES.iter().position(|n| *n == "painting").unwrap() as i32;
+        let mut w = Writer::new();
+        w.varint(321).uuid(9).varint(painting);
+        w.f64(11.0).f64(65.0).f64(-6.96875); // centre of a 2x2 on block (10, 64, -7), facing south
+        w.u8(0); // no movement
+        w.raw(&[0, 0, 0]).varint(3);
+        let packet = Packet::new(v26_2::ids::new::ADD_ENTITY, w.into_inner());
+        let position = |payload: &[u8]| {
+            let mut r = Reader::new(payload);
+            r.varint().unwrap();
+            r.uuid().unwrap();
+            r.varint().unwrap();
+            (r.f64().unwrap(), r.f64().unwrap(), r.f64().unwrap())
+        };
+        let mut native = v26_2::V26_3To26_2::new();
+        let fixed = native.repair_native(&packet).expect("corrected for 26.3 clients");
+        assert_eq!(position(&fixed), (10.0, 64.0, -7.0));
+        assert_eq!(fixed.len(), packet.payload.len());
+        assert_eq!(fixed[fixed.len() - 5..], packet.payload[packet.payload.len() - 5..], "the rest is untouched");
+        for protocol in [776, 774, 769, 767, 765, 763, 761, 759] {
+            let mut chain = Chain::for_client(Version { protocol }).unwrap();
+            let out = chain.clientbound(State::Play, packet.clone()).unwrap_or_else(|e| panic!("protocol {protocol}: {e}"));
+            assert_eq!(position(&out[0].payload), (10.0, 64.0, -7.0), "protocol {protocol}");
+        }
+        // Other entities keep their position.
+        let mut w = Writer::new();
+        w.varint(5).uuid(9).varint(painting + 1).f64(11.0).f64(65.0).f64(-7.0).u8(0).raw(&[0, 0, 0]).varint(3);
+        assert!(native.repair_native(&Packet::new(v26_2::ids::new::ADD_ENTITY, w.into_inner())).is_none());
+    }
+
     /// Pumpkin sends a painting's variant as a plain registry id; clients expect the id plus one
     /// (0 means a definition follows). Its first painting therefore disconnected every client.
     #[test]

@@ -8,7 +8,7 @@ Copy each field into the Store Listing form at market.pumpkinmc.org.
 | Category | Utilities |
 | Pricing | Free |
 | Release channel | Beta |
-| Version | 0.4.0 |
+| Version | 0.4.1 |
 | Binary | `Multiversion.wasm` from the latest release of this repository (about 3.0 MB, under the 5 MB limit) |
 | Icon | `logo.png` (512×512) |
 | Screenshots | `screenshot-versions.png`, `screenshot-console.png`, `screenshot-config.png` (1600×900 each) |

@@ -63,10 +63,18 @@ impl Entities {
         self.types.insert(entity_id, ty);
         let is_cushion = ty == d::CUSHION_ENTITY_NEW as i32;
         w.varint(if is_cushion { d::FALLING_BLOCK_ENTITY_OLD as i32 } else { items.entity(ty) });
-        w.raw(r.bytes(24)?); // x y z
+        let position_at = w.buf.len();
+        let position = r.bytes(24)?; // x y z
+        w.raw(position);
         Self::copy_movement(&mut r, &mut w)?; // low-precision velocity (1.21.9+)
         w.raw(r.bytes(3)?); // pitch yaw head
         let data = r.varint()?;
+        if d::NEW_ENTITY_NAMES.get(ty as usize).is_some_and(|n| *n == "painting")
+            && let Some(anchor) = painting_anchor(position, data)
+        {
+            w.buf[position_at..position_at + 24].copy_from_slice(&anchor);
+            items.note_repair(position, anchor.to_vec(), false);
+        }
         let falling_block_new = d::NEW_ENTITY_NAMES.iter().position(|n| *n == "falling_block").map_or(-1, |p| p as i32);
         let data = if is_cushion {
             d::WHITE_CARPET_STATE_OLD as i32
@@ -418,6 +426,40 @@ impl Entities {
     }
 }
 
+/// The position a painting's spawn packet should carry, from the one Pumpkin (0.2.2) sends.
+///
+/// Vanilla sends the block a painting hangs on; the client takes the block from that position
+/// (rounding down) and works out the picture's centre itself from its size. Pumpkin sends the
+/// centre. For a painting an even number of blocks wide or tall the centre lies exactly on a
+/// block edge, so rounding down can pick the next block along, and the client then draws the
+/// painting one block out of place, over its neighbours. `facing` is the spawn data: 2 north,
+/// 3 south, 4 west, 5 east. `None` for anything else, which is left alone.
+fn painting_anchor(position: &[u8], facing: i32) -> Option<[u8; 24]> {
+    let mut r = Reader::new(position);
+    let (x, y, z) = (r.f64().ok()?, r.f64().ok()?, r.f64().ok()?);
+    if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+        return None;
+    }
+    let on_edge = |v: f64| (v - v.round()).abs() < 1e-4;
+    // Along the wall the centre of an even size sits half a block towards the painting's left
+    // (counter-clockwise of its facing). When that is the positive direction the edge it lands on
+    // belongs to the next block, so step back one; the same goes for an even height, upwards.
+    let along = |v: f64, left_is_positive: bool| if on_edge(v) { v.round() - if left_is_positive { 1.0 } else { 0.0 } } else { v.floor() };
+    let up = along(y, true);
+    let (ax, az) = match facing {
+        2 => (along(x, false), z.floor()), // north: left is west
+        3 => (along(x, true), z.floor()),  // south: left is east
+        4 => (x.floor(), along(z, true)),  // west: left is south
+        5 => (x.floor(), along(z, false)), // east: left is north
+        _ => return None,
+    };
+    let mut out = [0u8; 24];
+    out[..8].copy_from_slice(&ax.to_be_bytes());
+    out[8..16].copy_from_slice(&up.to_be_bytes());
+    out[16..].copy_from_slice(&az.to_be_bytes());
+    Some(out)
+}
+
 #[allow(dead_code)]
 pub fn dir() -> Dir {
     Dir::ToClient
@@ -474,5 +516,40 @@ mod tests {
         let mut w = Writer::new();
         Entities::game_modes(&mut Reader::new(&p.buf), &mut w).unwrap();
         assert_eq!(w.buf, vec![1, 0xff]);
+    }
+
+    /// Pumpkin's centre for a painting hanging on `anchor`, as its `calculate_center_pos` works it out.
+    fn pumpkin_centre(anchor: (i32, i32, i32), facing: i32, width: u32, height: u32) -> [u8; 24] {
+        let (dx, dz) = match facing { 2 => (0.0, -1.0), 3 => (0.0, 1.0), 4 => (-1.0, 0.0), _ => (1.0, 0.0) };
+        let (lx, lz) = match facing { 2 => (-1.0, 0.0), 3 => (1.0, 0.0), 4 => (0.0, 1.0), _ => (0.0, -1.0) };
+        let w = if width % 2 == 0 { 0.5 } else { 0.0 };
+        let h = if height % 2 == 0 { 0.5 } else { 0.0 };
+        let x = f64::from(anchor.0) + 0.5 - dx * 0.46875 + w * lx;
+        let y = f64::from(anchor.1) + 0.5 + h;
+        let z = f64::from(anchor.2) + 0.5 - dz * 0.46875 + w * lz;
+        let mut out = [0u8; 24];
+        out[..8].copy_from_slice(&x.to_be_bytes());
+        out[8..16].copy_from_slice(&y.to_be_bytes());
+        out[16..].copy_from_slice(&z.to_be_bytes());
+        out
+    }
+
+    #[test]
+    fn a_painting_spawns_on_the_block_it_hangs_on() {
+        for anchor in [(10, 64, -7), (-3, -12, 0), (0, 0, 0)] {
+            for facing in 2..=5 {
+                for (width, height) in [(1, 1), (2, 1), (1, 2), (2, 2), (4, 2), (4, 3), (4, 4), (3, 3)] {
+                    let got = painting_anchor(&pumpkin_centre(anchor, facing, width, height), facing).unwrap();
+                    let mut r = Reader::new(&got);
+                    let got = (r.f64().unwrap(), r.f64().unwrap(), r.f64().unwrap());
+                    assert_eq!(got, (f64::from(anchor.0), f64::from(anchor.1), f64::from(anchor.2)), "anchor {anchor:?} facing {facing} size {width}x{height}");
+                }
+            }
+        }
+        // not a wall direction, or not a number: left alone
+        assert!(painting_anchor(&pumpkin_centre((1, 2, 3), 3, 1, 1), 0).is_none());
+        let mut nan = pumpkin_centre((1, 2, 3), 3, 1, 1);
+        nan[..8].copy_from_slice(&f64::NAN.to_be_bytes());
+        assert!(painting_anchor(&nan, 3).is_none());
     }
 }

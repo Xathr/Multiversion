@@ -95,7 +95,8 @@ impl V1_20_2To1_20 {
             new::CONFIG_KEEP_ALIVE => self.reply(State::Configuration, new::S_CONFIG_KEEP_ALIVE, p.clone()),
             new::CONFIG_PING => self.reply(State::Configuration, new::S_CONFIG_PONG, p.clone()),
             new::CONFIG_REGISTRY_DATA => {
-                let tag = nbt::read(&mut Reader::new(p)).map_err(e)?;
+                let mut tag = nbt::read(&mut Reader::new(p)).map_err(e)?;
+                canonical_registry_names(&mut tag);
                 match (&mut self.registries, tag) {
                     (Some(Tag::Compound(have)), Tag::Compound(entries)) => {
                         for (k, v) in entries {
@@ -250,6 +251,20 @@ impl V1_20_2To1_20 {
             }
             old::S_CUSTOM_PAYLOAD => out.push(Packet::new(new::S_CONFIG_CUSTOM_PAYLOAD, pkt.payload.clone())),
             _ => {}
+        }
+    }
+}
+
+/// Gives every registry its full name. A server may send "worldgen/biome" for
+/// "minecraft:worldgen/biome"; clients read both the same, but the steps for older versions find
+/// the registries they must change (biomes, chat types, trim patterns, damage types) by full name.
+fn canonical_registry_names(registries: &mut Tag) {
+    let full = |name: &str| if name.contains(':') { name.to_string() } else { format!("minecraft:{name}") };
+    let Tag::Compound(entries) = registries else { return };
+    for (name, registry) in entries.iter_mut() {
+        *name = full(name);
+        if let Some(Tag::String(ty)) = registry.get_mut("type") {
+            *ty = full(ty);
         }
     }
 }
@@ -546,5 +561,19 @@ mod tests {
         w.string("{\"text\":\"bye\"}");
         let out = cb(&mut t, State::Configuration, new::CONFIG_DISCONNECT, w.buf.clone());
         assert_eq!((out[0].id, out[0].payload.clone()), (old::DISCONNECT, w.buf));
+    }
+
+    #[test]
+    fn registry_names_get_their_namespace() {
+        let mut tag = Tag::Compound(vec![
+            ("worldgen/biome".into(), Tag::Compound(vec![("type".into(), Tag::String("worldgen/biome".into())), ("value".into(), Tag::List(Vec::new()))])),
+            ("minecraft:chat_type".into(), Tag::Compound(vec![("type".into(), Tag::String("minecraft:chat_type".into()))])),
+            ("mod:thing".into(), Tag::Compound(Vec::new())),
+        ]);
+        canonical_registry_names(&mut tag);
+        let Tag::Compound(entries) = &tag else { unreachable!() };
+        let names: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(names, ["minecraft:worldgen/biome", "minecraft:chat_type", "mod:thing"]);
+        assert_eq!(tag.get("minecraft:worldgen/biome").and_then(|r| r.get("type")).and_then(Tag::as_str), Some("minecraft:worldgen/biome"));
     }
 }
