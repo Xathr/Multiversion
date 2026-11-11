@@ -2,13 +2,10 @@
 //! Works on byte buffers fed by the reactor; no blocking I/O here.
 
 use super::buf::{varint_len, Reader, Writer};
-use aes::cipher::{AsyncStreamCipher, KeyIvInit};
 #[allow(unused_imports)]
 use std::convert::TryInto;
 use flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress, Status};
 
-type Aes128Cfb8Enc = cfb8::Encryptor<aes::Aes128>;
-type Aes128Cfb8Dec = cfb8::Decryptor<aes::Aes128>;
 
 pub const MAX_PACKET: usize = 1 << 21; // vanilla: 2 MiB (uncompressed) / 8 MiB compressed cap
 /// The largest frame accepted once a player is logged in (and from Pumpkin).
@@ -26,7 +23,10 @@ pub struct Inbound {
     read: usize,
     cipher: Option<Cfb8Stream>,
     pub compression: i32, // -1 = off
-    inflater: Decompress,
+    /// zlib state, about 40 KiB. Made when the first compressed packet arrives: most
+    /// connections (server-list pings, logins that fail, an uncompressed link to Pumpkin) never
+    /// need it.
+    inflater: Option<Box<Decompress>>,
     /// Frames (and declared decompressed sizes) above this are refused.
     pub max_frame: usize,
     /// `next_frame` hands compressed frames back as they are instead of decompressing them, for
@@ -44,7 +44,7 @@ pub enum Frame {
 
 impl Default for Inbound {
     fn default() -> Self {
-        Self { buf: Vec::new(), read: 0, cipher: None, compression: -1, inflater: Decompress::new(true), max_frame: MAX_FRAME, keep_compressed: false }
+        Self { buf: Vec::new(), read: 0, cipher: None, compression: -1, inflater: None, max_frame: MAX_FRAME, keep_compressed: false }
     }
 }
 
@@ -130,12 +130,13 @@ impl Inbound {
             return Err(format!("invalid uncompressed length {data_len}"));
         }
         let mut out = Vec::with_capacity(data_len as usize + 16);
-        self.inflater.reset(true);
+        let inflater = self.inflater.get_or_insert_with(|| Box::new(Decompress::new(true)));
+        inflater.reset(true);
         let input = r.remaining();
         loop {
-            let consumed = self.inflater.total_in() as usize;
-            let before_out = self.inflater.total_out();
-            let status = self.inflater
+            let consumed = inflater.total_in() as usize;
+            let before_out = inflater.total_out();
+            let status = inflater
                 .decompress_vec(&input[consumed..], &mut out, FlushDecompress::Finish)
                 .map_err(|e| format!("zlib: {e}"))?;
             match status {
@@ -144,7 +145,7 @@ impl Inbound {
                     if out.len() > data_len as usize {
                         return Err(format!("decompressed more than the declared {data_len} bytes"));
                     }
-                    if self.inflater.total_out() == before_out && self.inflater.total_in() as usize == consumed {
+                    if inflater.total_out() == before_out && inflater.total_in() as usize == consumed {
                         return Err("truncated compressed packet".into());
                     }
                     if out.len() == out.capacity() {
@@ -160,52 +161,21 @@ impl Inbound {
     }
 }
 
-/// Encryption-aware inbound: keeps ciphertext state correctly. Replaces `Inbound::feed` when
-/// encryption is on. (Kept separate so the hot path without encryption stays simple.)
-pub struct Cfb8Stream {
-    key: [u8; 16],
-    iv: [u8; 16],
-}
-
-impl Cfb8Stream {
-    pub fn new(key: [u8; 16]) -> Self {
-        Self { key, iv: key }
-    }
-    /// Decrypts `data` in place.
-    pub fn decrypt(&mut self, data: &mut [u8]) {
-        if data.is_empty() {
-            return;
-        }
-        let mut last_iv = self.iv;
-        // Next IV = last 16 ciphertext bytes (with previous IV as prefix if fewer).
-        let mut tail = [0u8; 16];
-        let combined: Vec<u8> = last_iv.iter().copied().chain(data.iter().copied()).collect();
-        tail.copy_from_slice(&combined[combined.len() - 16..]);
-        Aes128Cfb8Dec::new((&self.key).into(), (&last_iv).into()).decrypt(data);
-        last_iv = tail;
-        self.iv = last_iv;
-    }
-    /// Encrypts `data` in place.
-    pub fn encrypt(&mut self, data: &mut [u8]) {
-        if data.is_empty() {
-            return;
-        }
-        Aes128Cfb8Enc::new((&self.key).into(), (&self.iv).into()).encrypt(data);
-        let combined: Vec<u8> = self.iv.iter().copied().chain(data.iter().copied()).collect();
-        self.iv.copy_from_slice(&combined[combined.len() - 16..]);
-    }
-}
+/// One direction of a connection's encryption.
+pub use super::aes::Cfb8 as Cfb8Stream;
 
 /// Builds outbound frames (compress → length prefix → encrypt).
 pub struct Outbound {
     pub compression: i32,
-    deflater: Compress,
+    /// zlib state, about 300 KiB. Made when the first packet is compressed, for the same reason
+    /// as `Inbound::inflater`.
+    deflater: Option<Box<Compress>>,
     cipher: Option<Cfb8Stream>,
 }
 
 impl Default for Outbound {
     fn default() -> Self {
-        Self { compression: -1, deflater: Compress::new(Compression::new(1), true), cipher: None }
+        Self { compression: -1, deflater: None, cipher: None }
     }
 }
 
@@ -213,16 +183,17 @@ impl Outbound {
     /// zlib-compresses `data` completely. `compress_vec` only fills the spare capacity of the
     /// output vector, so keep going (growing it) until the stream is finished.
     fn deflate(&mut self, data: &[u8]) -> Vec<u8> {
-        self.deflater.reset();
+        let deflater = self.deflater.get_or_insert_with(|| Box::new(Compress::new(Compression::new(1), true)));
+        deflater.reset();
         let mut out = Vec::with_capacity(data.len() / 2 + 64);
         loop {
-            let before_in = self.deflater.total_in();
-            let before_out = self.deflater.total_out();
-            let status = self.deflater.compress_vec(&data[before_in as usize..], &mut out, FlushCompress::Finish).expect("zlib compression");
+            let before_in = deflater.total_in();
+            let before_out = deflater.total_out();
+            let status = deflater.compress_vec(&data[before_in as usize..], &mut out, FlushCompress::Finish).expect("zlib compression");
             match status {
                 Status::StreamEnd => return out,
                 Status::Ok | Status::BufError => {
-                    if self.deflater.total_out() == before_out && self.deflater.total_in() == before_in {
+                    if deflater.total_out() == before_out && deflater.total_in() == before_in {
                         out.reserve(data.len() + 64);
                     } else if out.len() == out.capacity() {
                         out.reserve(out.capacity().max(1024));

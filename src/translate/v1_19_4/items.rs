@@ -2,6 +2,7 @@
 //! the same in both versions; what changes are the ids, and armour trims 1.19.4 has no pattern for.
 
 use super::super::data_1_19_4 as d;
+use super::super::table::SameName;
 use crate::proto::buf::{DecodeError, Reader, Result, Writer};
 use crate::proto::nbt::{self, Tag};
 
@@ -15,9 +16,13 @@ fn plain(key: &str) -> &str {
     key.strip_prefix("minecraft:").unwrap_or(key)
 }
 
+/// 1.20 items and blocks that 1.19.4 has under the same name, by id.
+pub static SAME_ITEMS: SameName = SameName::new(&d::NEW_ITEM_NAMES, &d::OLD_ITEM_NAMES);
+pub static SAME_BLOCKS: SameName = SameName::new(&d::NEW_BLOCK_NAMES, &d::OLD_BLOCK_NAMES);
+
 /// Whether 1.19.4 has this 1.20 item under the same name (otherwise it gets a stand-in).
 fn exists_in_old(new_id: i32) -> bool {
-    d::NEW_ITEM_NAMES.get(new_id as usize).is_some_and(|name| d::OLD_ITEM_NAMES.contains(name))
+    SAME_ITEMS.get(new_id).is_some()
 }
 
 /// An item stack, 1.20 → 1.19.4.

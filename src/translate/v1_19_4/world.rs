@@ -3,7 +3,8 @@
 //! RESPAWN layouts (1.20 added a portal cooldown).
 
 use super::super::data_1_19_4 as d;
-use super::items::{block_state, string_copy, varint_copy};
+use super::super::table::SameName;
+use super::items::{block_state, string_copy, varint_copy, SAME_BLOCKS, SAME_ITEMS};
 use crate::proto::buf::{DecodeError, Reader, Result, Writer};
 use crate::proto::nbt::{self, Tag};
 
@@ -385,15 +386,8 @@ pub fn open_screen(payload: &[u8]) -> Result<Vec<u8>> {
 
 /// Ids of things 1.19.4 also has, as 1.19.4 numbers them. Tags must not gain the stand-ins:
 /// a lilac standing in for a pitcher plant is not suddenly a sniffer's food.
-fn shared_ids(ids: &[i32], new_names: &[&str], old_names: &[&str]) -> Vec<i32> {
-    let mut out = Vec::with_capacity(ids.len());
-    for id in ids {
-        let Some(name) = new_names.get(*id as usize) else { continue };
-        if let Some(old) = old_names.iter().position(|n| n == name) {
-            out.push(old as i32);
-        }
-    }
-    out
+fn shared_ids(ids: &[i32], same: &SameName) -> Vec<i32> {
+    ids.iter().filter_map(|id| same.get(*id)).collect()
 }
 
 pub fn update_tags(payload: &[u8]) -> Result<Vec<u8>> {
@@ -417,8 +411,8 @@ pub fn update_tags(payload: &[u8]) -> Result<Vec<u8>> {
             has_replaceable_plants |= plain(name) == "replaceable_plants";
             let ids = r.list(Reader::varint)?;
             let ids = match kind {
-                "block" => shared_ids(&ids, &d::NEW_BLOCK_NAMES, &d::OLD_BLOCK_NAMES),
-                "item" => shared_ids(&ids, &d::NEW_ITEM_NAMES, &d::OLD_ITEM_NAMES),
+                "block" => shared_ids(&ids, &SAME_BLOCKS),
+                "item" => shared_ids(&ids, &SAME_ITEMS),
                 _ => ids, // entity types, fluids, game events...: the same in both versions
             };
             body.varint(ids.len() as i32);

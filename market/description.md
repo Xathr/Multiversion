@@ -29,7 +29,7 @@
 - 🛡️ **Built-in protection**: oversized packets before login are refused, idle logins time out, one address can only hold a few connections that are still logging in and open a limited number per 10 seconds, and malformed data is refused before it can use up memory
 - 🔔 **Update check**: tells the console and operators when a newer version is on the Market, and `/multiversion update download` fetches the signed file after checking its signature
 - ⚡ **Light on the CPU**: server-list pings are answered from a one-second cache, and Pumpkin's link to the plugin can skip compression
-- 🪶 **Self-contained**: one `.wasm` file (about 2.9 MB) and one config file
+- 🪶 **Self-contained**: one `.wasm` file (about 3.1 MB) and one config file
 
 ![Console](https://raw.githubusercontent.com/Xathr/Multiversion/main/market/screenshot-console.png)
 

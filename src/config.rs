@@ -270,51 +270,101 @@ impl Config {
     }
 }
 
+/// One setting as a fresh config file writes it: its section ("" for none), its name, and its
+/// line or lines.
+fn settings_in_order(full: &str) -> Vec<(String, String, String)> {
+    let mut out: Vec<(String, String, String)> = Vec::new();
+    let mut section = String::new();
+    for line in full.lines() {
+        let trimmed = line.trim();
+        if let Some(name) = trimmed.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+            section = name.to_string();
+        } else if let Some((key, _)) = line.split_once(" = ").filter(|(k, _)| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')) {
+            out.push((section.clone(), key.to_string(), line.to_string()));
+        } else if !trimmed.is_empty()
+            && let Some(last) = out.last_mut()
+        {
+            // the rest of a value written over several lines (a list)
+            last.2.push('\n');
+            last.2.push_str(line);
+        }
+    }
+    out
+}
+
 /// `text` (a config file) with every setting it does not mention added, at the value in `cfg`.
 /// What is already there, comments and layout included, is left as it is. `None` if nothing is
-/// missing or the text cannot be edited.
+/// missing or the text cannot be read.
 pub fn fill_missing(text: &str, cfg: &Config) -> Option<String> {
-    fn merge(into: &mut toml_edit::Table, from: &toml_edit::Table, changed: &mut bool) {
-        for (key, item) in from.iter() {
-            match into.get_mut(key) {
-                None => {
-                    into.insert(key, item.clone());
-                    *changed = true;
-                }
-                Some(existing) => {
-                    if let (Some(a), Some(b)) = (existing.as_table_mut(), item.as_table()) {
-                        merge(a, b, changed);
-                    }
-                }
-            }
-        }
-    }
-    let mut doc: toml_edit::DocumentMut = text.parse().ok()?;
-    let mut full: toml_edit::DocumentMut = toml::to_string_pretty(cfg).ok()?.parse().ok()?;
-    // Settings outside any section go under the comment that opens the file, not above it.
-    let mut top = String::new();
-    let top_keys: Vec<String> = full.iter().filter(|(_, item)| !item.is_table()).map(|(k, _)| k.to_string()).collect();
-    for key in top_keys {
-        if let Some(item) = full.remove(&key)
-            && !doc.contains_key(&key)
-        {
-            top.push_str(&format!("{key} = {}\n", item.to_string().trim()));
-        }
-    }
-    let mut changed = !top.is_empty();
-    merge(doc.as_table_mut(), full.as_table(), &mut changed);
-    if !changed {
+    let have: toml::Value = toml::from_str(text).ok()?;
+    let full = toml::to_string_pretty(cfg).ok()?;
+    let missing: Vec<(String, String, String)> = settings_in_order(&full)
+        .into_iter()
+        .filter(|(section, key, _)| {
+            let table = if section.is_empty() { Some(&have) } else { have.get(section) };
+            table.and_then(|t| t.get(key)).is_none()
+        })
+        .collect();
+    if missing.is_empty() {
         return None;
     }
-    let body = doc.to_string();
-    if top.is_empty() {
-        return Some(body);
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    // Where each section of the file starts: the line of its [heading].
+    let heading = |line: &str| line.trim().strip_prefix('[').and_then(|r| r.split(']').next()).map(|n| n.trim().to_string());
+    let headings: Vec<(usize, String)> = lines.iter().enumerate().filter_map(|(i, l)| heading(l).map(|n| (i, n))).collect();
+    let mut new_sections: Vec<String> = Vec::new();
+    // Work from the bottom of the file up, so earlier line numbers stay right.
+    let mut sections: Vec<&str> = Vec::new();
+    for (section, _, _) in &missing {
+        if !section.is_empty() && !sections.contains(&section.as_str()) {
+            sections.push(section);
+        }
     }
-    let opening: usize = body.lines().take_while(|l| l.trim_start().starts_with('#')).map(|l| l.len() + 1).sum();
-    let opening = opening.min(body.len());
-    let gap = if opening > 0 { "\n" } else { "" };
-    let rest = body[opening..].trim_start_matches('\n');
-    Some(format!("{}{gap}{top}\n{rest}", &body[..opening]))
+    let mut placed: Vec<(usize, Vec<String>)> = Vec::new();
+    for section in sections {
+        let added: Vec<String> = missing.iter().filter(|(s, _, _)| s == section).map(|(_, _, line)| line.clone()).collect();
+        match headings.iter().position(|(_, name)| name == section) {
+            Some(at) => {
+                // After the section's last line that says something.
+                let start = headings[at].0;
+                let end = headings.get(at + 1).map_or(lines.len(), |(i, _)| *i);
+                let last = (start..end).rev().find(|i| !lines[*i].trim().is_empty()).unwrap_or(start);
+                placed.push((last + 1, added));
+            }
+            // In the file some other way (an inline table): leave it alone.
+            None if have.get(section).is_some() => {}
+            None => new_sections.push(format!("[{section}]\n{}", added.join("\n"))),
+        }
+    }
+    placed.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+    for (at, added) in placed {
+        for (i, line) in added.into_iter().enumerate() {
+            lines.insert(at + i, line);
+        }
+    }
+    // Settings outside any section go under the comment that opens the file, above the rest.
+    let top: Vec<String> = missing.iter().filter(|(s, _, _)| s.is_empty()).map(|(_, _, line)| line.clone()).collect();
+    if !top.is_empty() {
+        let opening = lines.iter().take_while(|l| l.trim_start().starts_with('#')).count();
+        let mut block = Vec::new();
+        if opening > 0 {
+            block.push(String::new());
+        }
+        block.extend(top);
+        block.push(String::new());
+        let rest_from = (opening..lines.len()).find(|i| !lines[*i].trim().is_empty()).unwrap_or(lines.len());
+        lines.splice(opening..rest_from, block);
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    for section in new_sections {
+        if !out.ends_with("\n\n") {
+            out.push('\n');
+        }
+        out.push_str(&section);
+        out.push('\n');
+    }
+    Some(out)
 }
 
 /// A pumpkin.toml line the plugin depends on.

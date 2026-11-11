@@ -37,6 +37,61 @@ impl Deref for Table {
     }
 }
 
+/// A list of names (items, blocks, sounds, ... of one version), stored as runs of positions in
+/// the shared pool of names (`data_names::POOL`) instead of as a list of strings: versions share
+/// nearly all their names, and a list of strings costs 8 bytes per entry on top of the text. It
+/// is laid out as an ordinary list the first time it is used, and reads like one (`get`, `iter`,
+/// `len`, indexing).
+pub struct Names {
+    len: usize,
+    runs: &'static [(u32, u32)],
+    expanded: OnceLock<Vec<&'static str>>,
+}
+
+impl Names {
+    pub const fn new(len: usize, runs: &'static [(u32, u32)]) -> Self {
+        Self { len, runs, expanded: OnceLock::new() }
+    }
+}
+
+impl Deref for Names {
+    type Target = [&'static str];
+    fn deref(&self) -> &[&'static str] {
+        self.expanded.get_or_init(|| {
+            let pool = &super::data_names::POOL;
+            let mut out = Vec::with_capacity(self.len);
+            for &(start, n) in self.runs {
+                out.extend((0..n).map(|i| pool.get((start + i) as usize).copied().unwrap_or("")));
+            }
+            debug_assert_eq!(out.len(), self.len, "name runs don't add up to the list's length");
+            out
+        })
+    }
+}
+
+/// For every id of a newer version, the id the thing of the same name has in an older version.
+/// Worked out once, on first use, so looking a name up never means searching the whole list.
+pub struct SameName {
+    new: &'static Names,
+    old: &'static Names,
+    ids: OnceLock<Vec<i32>>,
+}
+
+impl SameName {
+    pub const fn new(new: &'static Names, old: &'static Names) -> Self {
+        Self { new, old, ids: OnceLock::new() }
+    }
+
+    /// The older version's id for `new_id`, or `None` if the older version has nothing by that name.
+    pub fn get(&self, new_id: i32) -> Option<i32> {
+        let ids = self.ids.get_or_init(|| {
+            let by_name: std::collections::HashMap<&str, i32> = self.old.iter().enumerate().map(|(i, n)| (*n, i as i32)).collect();
+            self.new.iter().map(|n| by_name.get(n).copied().unwrap_or(-1)).collect()
+        });
+        usize::try_from(new_id).ok().and_then(|i| ids.get(i)).copied().filter(|id| *id >= 0)
+    }
+}
+
 /// Splits values into the runs `Table::new` takes (used by tests; the generator does the same).
 #[cfg(test)]
 pub fn runs(values: &[u32]) -> Vec<(u32, u32)> {

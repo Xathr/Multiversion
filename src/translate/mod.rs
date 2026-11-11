@@ -5,6 +5,7 @@
 //! serverbound, one version step at a time.
 
 pub mod table;
+pub mod data_names;
 pub mod data_26_2;
 pub mod data_26_1;
 pub mod data_1_21_11;
@@ -42,6 +43,8 @@ pub mod v1_19_1;
 pub mod v1_19;
 #[cfg(test)]
 mod fuzz_tests;
+#[cfg(test)]
+mod replay_bench;
 
 use crate::proto::version::{Version, BACKEND, KNOWN};
 

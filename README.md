@@ -277,6 +277,7 @@ src/conn.rs           per-connection state machine (handshake → status/login �
 src/proxy.rs          reactor handler: sockets ↔ connections, timeouts
 src/translate/        Translator trait + chain; one module per version step (v26_2/ = 26.3 ↔ 26.2, ...)
 tools/gen_mappings.py regenerates the src/translate/data_*.rs id tables
+tools/pack_names.py  packs their name lists into one shared pool (run after gen_mappings.py)
 ```
 
 ### Adding the next version step
@@ -284,9 +285,24 @@ tools/gen_mappings.py regenerates the src/translate/data_*.rs id tables
 1. Get per-version registry mapping files (`mappings/mapping-<version>.json` id lists and
    `mappings/diff/mapping-<new>to<old>.json` fallbacks) and run
    `tools/gen_mappings.py <dir> <new> <old> src/translate/data_<old>.rs`.
+   Then run `tools/pack_names.py src/translate`, which stores the new name lists compactly.
 2. Create `src/translate/v<old>/` after the pattern of the existing steps, covering every packet,
    registry and data component that changed between the two versions.
 3. Register it in `translate::make_step` and add the version to `proto::version::KNOWN`.
+
+## Speed
+
+To see where translation time goes, record the packets a 26.3 client receives and replay them
+through every version's translators:
+
+```bash
+MULTIVERSION_REPLAY=stream.bin cargo test --release replay -- --ignored --nocapture
+```
+
+(the file format is described in `src/translate/replay_bench.rs`). Translating a whole join and
+45 seconds of play takes 5 to 80 ms depending on how many version steps the client is from 26.3.
+In online mode most of the plugin's time goes on the connection encryption, which is why the
+plugin has its own AES (`src/proto/aes.rs`).
 
 ## Testing
 
