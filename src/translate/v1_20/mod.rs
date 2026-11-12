@@ -27,8 +27,10 @@ use crate::proto::version::Version;
 use ids::{new, old};
 use items::Kind;
 
-/// Chunks per tick asked for after each batch (vanilla clients measure theirs; 1.20.1 can't).
-const CHUNKS_PER_TICK: f32 = 20.0;
+/// Chunks per tick asked for after each batch. Newer clients measure how fast they can load
+/// chunks and tell the server; 1.20.1 and older cannot, and load each chunk on their main
+/// thread, so a high rate here shows up as dropped frames while the world streams in.
+const CHUNKS_PER_TICK: f32 = 8.0;
 
 pub struct V1_20_2To1_20 {
     /// Spawned entities whose entity data needs more than a type-by-type rewrite.
