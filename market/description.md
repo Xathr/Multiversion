@@ -88,4 +88,10 @@ You can also change the public and backend ports, online mode, the server-list v
 - 1.19, 1.19.1 and 1.19.2 sign chat in a way newer versions cannot check. Their messages are sent unsigned, other players' chat reaches them as plain server messages, and they cannot chat on a server that enforces secure chat.
 - Built for Pumpkin 0.2.2 (Minecraft 26.3, plugin API v0.1).
 
-Open source under GPL-3.0. Please report any disconnect message on GitHub so it can be fixed.
+## Sources
+
+- Registry id tables are generated from the [ViaVersion Mappings](https://github.com/ViaVersion/Mappings) project.
+- The version steps follow the changes [ViaBackwards](https://github.com/ViaVersion/ViaBackwards) and [ViaVersion](https://github.com/ViaVersion/ViaVersion) make between each pair of versions, written again in Rust.
+- Packet layouts were checked against [minecraft-data](https://github.com/PrismarineJS/minecraft-data).
+
+Open source under GPL-3.0, as ViaVersion and ViaBackwards are. Please report any disconnect message on GitHub so it can be fixed.
