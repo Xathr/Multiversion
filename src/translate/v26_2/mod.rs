@@ -59,8 +59,26 @@ impl V26_3To26_2 {
             self.to_client.take_repairs();
             // Only the corrections are wanted; the 26.2 packet this produces is thrown away, and
             // a packet this step cannot read is left for the client to judge.
-            let _ = self.play_clientbound(&current, &mut Vec::new());
+            let read = self.play_clientbound(&current, &mut Vec::new());
             let mut repairs = self.to_client.take_repairs();
+            if let Err(why) = &read
+                && carries_items
+                && pkt.id != new::SET_ENTITY_DATA
+            {
+                // Not readable here, so the careful repair cannot be trusted to have reached
+                // every item. Fall back to looking for Pumpkin's broken crossbow bytes directly.
+                let hex: String = current.payload.iter().take(160).map(|b| format!("{b:02x}")).collect();
+                crate::log::warn_once(
+                    &format!("native-item:{}:{why}", pkt.id),
+                    &format!("could not read an item packet from Pumpkin (id {}, {why}); please report this line: {hex}", pkt.id),
+                );
+                // Only where the packet holds a single item: among many, an ordinary run of
+                // bytes (51 of an item, then empty slots) could look the same.
+                let single_item = matches!(pkt.id, new::CONTAINER_SET_SLOT | new::SET_CURSOR_ITEM | new::SET_PLAYER_INVENTORY);
+                if single_item && let Some(fixed) = items::replace_empty_projectiles(&current.payload) {
+                    return Some(fixed);
+                }
+            }
             if round > 0 {
                 // Already made in the first round; making them again would change the result.
                 repairs.retain(|r| r.settles);

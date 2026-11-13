@@ -56,6 +56,34 @@ pub struct Repair {
     pub settles: bool,
 }
 
+/// Last resort for a 26.3 packet this step could not read: finds a crossbow's projectile list as
+/// Pumpkin writes it (the component number, a count, then four zero bytes for each projectile)
+/// and puts one arrow there instead. `None` when the packet holds no such list.
+pub fn replace_empty_projectiles(payload: &[u8]) -> Option<Vec<u8>> {
+    let component = d::NEW_COMPONENT_NAMES.iter().position(|n| *n == "charged_projectiles")? as u8;
+    let arrow = d::NEW_ITEM_NAMES.iter().position(|i| *i == "arrow")? as i32;
+    if component >= 0x80 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(payload.len() + 8);
+    let (mut i, mut found) = (0, false);
+    while i < payload.len() {
+        let n = payload.get(i + 1).copied().unwrap_or(0) as usize;
+        let end = i + 2 + n * 4;
+        if payload[i] == component && (1..=16).contains(&n) && end <= payload.len() && payload[i + 2..end].iter().all(|b| *b == 0) {
+            let mut w = Writer::new();
+            w.varint(component as i32).varint(1).varint(arrow).varint(1).varint(0).varint(0);
+            out.extend_from_slice(&w.buf);
+            i = end;
+            found = true;
+        } else {
+            out.push(payload[i]);
+            i += 1;
+        }
+    }
+    found.then_some(out)
+}
+
 enum Kept {
     Drop,
     As(&'static str),
@@ -1155,6 +1183,16 @@ impl Items {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_projectiles_are_found_without_reading_the_packet() {
+        // a set-slot packet as Pumpkin 0.2.2 sends it for a damaged multishot crossbow
+        let raw = [0x00, 0x48, 0x00, 0x24, 0x01, 0xd3, 0x0b, 0x03, 0x00, 0x03, 0x09, 0x0d, 0x01, 0x18, 0x01, 0x33, 0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let fixed = replace_empty_projectiles(&raw).unwrap();
+        assert_eq!(fixed, [0x00, 0x48, 0x00, 0x24, 0x01, 0xd3, 0x0b, 0x03, 0x00, 0x03, 0x09, 0x0d, 0x01, 0x18, 0x01, 0x33, 0x01, 0xf1, 0x07, 0x01, 0x00, 0x00]);
+        assert!(replace_empty_projectiles(&fixed).is_none());
+        assert!(replace_empty_projectiles(&[0x00, 0x30, 0x00, 0x24, 0x01, 0xd3, 0x0b, 0x00, 0x00]).is_none());
+    }
 
     #[test]
     fn plain_stack_roundtrips_and_remaps_id() {
