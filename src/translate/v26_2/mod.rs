@@ -302,3 +302,46 @@ pub fn entity_type_painting_variant() -> i32 {
 fn _data_used() -> usize {
     data_26_2::ITEMS.len()
 }
+
+#[cfg(test)]
+mod capture_replay {
+    use super::*;
+
+    /// Replays item packets captured from a real Pumpkin server (MULTIVERSION_ITEMS=file, records
+    /// of big-endian id, length, payload) and reports any the repair leaves unreadable.
+    #[test]
+    #[ignore]
+    fn captured_item_packets_are_repaired() {
+        let Ok(path) = std::env::var("MULTIVERSION_ITEMS") else { return };
+        let data = std::fs::read(path).unwrap();
+        let mut t = V26_3To26_2::new();
+        let (mut i, mut n, mut bad, mut fixed) = (0, 0, 0, 0);
+        while i + 8 <= data.len() {
+            let id = i32::from_be_bytes(data[i..i + 4].try_into().unwrap());
+            let len = i32::from_be_bytes(data[i + 4..i + 8].try_into().unwrap()) as usize;
+            let payload = data[i + 8..i + 8 + len].to_vec();
+            i += 8 + len;
+            n += 1;
+            let pkt = Packet::new(id, payload.clone());
+            let out = t.repair_native(&pkt);
+            if out.is_some() {
+                fixed += 1;
+            }
+            let after = Packet::new(id, out.clone().unwrap_or(payload.clone()));
+            // what is sent must now read cleanly and need nothing more
+            t.to_client.take_repairs();
+            let read = t.play_clientbound(&after, &mut Vec::new());
+            let left = t.to_client.take_repairs().len();
+            if read.is_err() || left > 0 {
+                bad += 1;
+                println!("#{n} id {id}: read {:?}, {left} repairs left\n  in  {}\n  out {}", read.err(), hex(&payload), hex(&after.payload));
+            }
+        }
+        println!("{n} packets, {fixed} repaired, {bad} still bad");
+        assert_eq!(bad, 0);
+    }
+
+    fn hex(b: &[u8]) -> String {
+        b.iter().take(60).map(|x| format!("{x:02x}")).collect()
+    }
+}

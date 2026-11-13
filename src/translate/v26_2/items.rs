@@ -72,7 +72,7 @@ impl Items {
     pub fn note_repair(&self, read: &[u8], with: Vec<u8>, settles: bool) {
         let mut repairs = self.repairs.borrow_mut();
         // Only clients on 26.3 collect these; for translated clients they would pile up.
-        if repairs.len() >= 64 {
+        if repairs.len() >= 4096 {
             repairs.clear();
         }
         let start = read.as_ptr() as usize;
