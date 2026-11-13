@@ -1,4 +1,4 @@
-# Multiversion — every 1.20+ player on one Pumpkin server
+# Multiversion — every 1.19+ player on one Pumpkin server
 
 **Multiversion** lets players on **Minecraft Java 1.19 through 26.3** join your Pumpkin server. Your friends no longer have to update, downgrade or install anything. It runs entirely inside the server as a WebAssembly plugin: **no proxy, no Java, no second process, no extra port.**
 
