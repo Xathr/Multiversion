@@ -12,8 +12,9 @@
 //! can't read. Everything else is ids: items, block states, entities, particles, sounds, block
 //! entities, menus, statistics and tags.
 //!
-//! Display, text display and interaction entities are shown as invisible marker armor stands (a
-//! text display's text is the stand's name), sniffers as ravagers.
+//! Text displays and interaction entities are shown as invisible marker armor stands (a text
+//! display's text is the stand's name), item displays as such a stand wearing the item, block
+//! displays as a falling block that stays put, and sniffers as ravagers.
 
 pub mod ids;
 pub mod items;
@@ -24,19 +25,52 @@ use std::collections::HashMap;
 use super::{Packet, State, TResult, Translator};
 use crate::proto::buf::{Reader, Writer};
 use crate::proto::version::Version;
+use crate::translate::data_1_19_3 as d;
 use ids::{new, old};
 use items::Kind;
 
 pub struct V1_19_4To1_19_3 {
     /// Spawned entities whose entity data needs more than a type-by-type rewrite.
     kinds: HashMap<i32, Kind>,
+    /// Block and item displays, which 1.19.3 does not have, and what stands in for each.
+    displays: HashMap<i32, StandIn>,
     /// Packets for the server, sent on the client's behalf.
     replies: Vec<(State, Packet)>,
 }
 
+/// A block or item display as a 1.19.3 client sees it. An item display is an unseen armor stand
+/// wearing the item on its head; a block display is a falling block that does not fall, made
+/// once the block is known. Both are placed so that what is shown sits where the display is.
+struct StandIn {
+    uuid: [u8; 16],
+    /// Where the display really is.
+    at: [f64; 3],
+    block: bool,
+    /// The block state the falling block was last made with.
+    state: Option<i32>,
+}
+
+/// How far below an item display its armor stand stands, so the item on its head is level
+/// with the display.
+const HEAD_HEIGHT: f64 = 1.7;
+
+impl StandIn {
+    /// Where the stand-in goes for a display at `at`.
+    fn place(&self, at: [f64; 3]) -> [f64; 3] {
+        if !self.block {
+            [at[0], at[1] - HEAD_HEIGHT, at[2]]
+        } else if self.state.is_some() {
+            // a block display starts at its corner, a falling block at the middle of its base
+            [at[0] + 0.5, at[1], at[2] + 0.5]
+        } else {
+            at
+        }
+    }
+}
+
 impl V1_19_4To1_19_3 {
     pub fn new() -> Self {
-        Self { kinds: HashMap::new(), replies: Vec::new() }
+        Self { kinds: HashMap::new(), displays: HashMap::new(), replies: Vec::new() }
     }
 
     fn play_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
@@ -61,8 +95,34 @@ impl V1_19_4To1_19_3 {
                     Some(k) => self.kinds.insert(spawn.entity, k),
                     None => self.kinds.remove(&spawn.entity),
                 };
-                out.push(Packet::new(old::ADD_ENTITY, spawn.payload));
-                if let Some(data) = items::spawn_data(kind) {
+                let mut payload = spawn.payload;
+                self.displays.remove(&spawn.entity);
+                if let Some(block) = items::display_shows_block(spawn.ty) {
+                    // id, uuid, type, then x y z
+                    let mut r = Reader::new(p);
+                    r.varint().map_err(e)?;
+                    let uuid: [u8; 16] = r.bytes(16).map_err(e)?.try_into().unwrap_or([0; 16]);
+                    r.varint().map_err(e)?;
+                    let at = [r.f64().map_err(e)?, r.f64().map_err(e)?, r.f64().map_err(e)?];
+                    let stand = StandIn { uuid, at, block, state: None };
+                    // the same fields in what goes out; only the type's length can differ
+                    let mut o = Reader::new(&payload);
+                    o.varint().map_err(e)?;
+                    o.bytes(16).map_err(e)?;
+                    o.varint().map_err(e)?;
+                    let start = payload.len() - o.len();
+                    for (i, v) in stand.place(at).iter().enumerate() {
+                        payload[start + i * 8..start + i * 8 + 8].copy_from_slice(&v.to_be_bytes());
+                    }
+                    self.displays.insert(spawn.entity, stand);
+                }
+                out.push(Packet::new(old::ADD_ENTITY, payload));
+                let item_display = items::display_shows_block(spawn.ty) == Some(false);
+                if let Some(mut data) = items::spawn_data(kind) {
+                    // full size for a stand that wears an item, so the item is not tiny
+                    if let (true, [.., flags, 0xff]) = (item_display, data.as_mut_slice()) {
+                        *flags &= !0x01;
+                    }
                     let mut w = Writer::with_capacity(data.len() + 5);
                     w.varint(spawn.entity).raw(&data);
                     out.push(Packet::new(old::SET_ENTITY_DATA, w.into_inner()));
@@ -73,15 +133,18 @@ impl V1_19_4To1_19_3 {
                 let mut r = Reader::new(p);
                 for id in r.list(Reader::varint).map_err(e)? {
                     self.kinds.remove(&id);
+                    self.displays.remove(&id);
                 }
                 p.to_vec()
             }
             new::LOGIN => {
                 self.kinds.clear();
+                self.displays.clear();
                 world::login(p).map_err(e)?
             }
             new::RESPAWN => {
                 self.kinds.clear();
+                self.displays.clear();
                 p.to_vec()
             }
             new::SET_ENTITY_DATA => {
@@ -89,8 +152,52 @@ impl V1_19_4To1_19_3 {
                 let entity = r.varint().map_err(e)?;
                 let mut w = Writer::with_capacity(p.len() + 8);
                 w.varint(entity);
-                items::entity_data(self.kinds.get(&entity).copied(), &mut r, &mut w).map_err(e)?;
+                let shown = items::entity_data(self.kinds.get(&entity).copied(), &mut r, &mut w).map_err(e)?;
+                match (shown, self.displays.get_mut(&entity)) {
+                    (Some(items::Shown::Item(item)), Some(stand)) if !stand.block => {
+                        // the armor stand wears the item on its head (slot 5)
+                        let mut gear = Writer::with_capacity(item.len() + 6);
+                        gear.varint(entity).u8(5).raw(&item);
+                        out.push(Packet::new(old::SET_EQUIPMENT, gear.into_inner()));
+                    }
+                    (Some(items::Shown::Block(state)), Some(stand)) if stand.block && stand.state != Some(state) => {
+                        // a falling block shows the block it was made with, so make it again
+                        stand.state = Some(state);
+                        let mut gone = Writer::new();
+                        gone.varint(1).varint(entity);
+                        out.push(Packet::new(old::REMOVE_ENTITIES, gone.into_inner()));
+                        let at = stand.place(stand.at);
+                        let falling = d::OLD_ENTITY_NAMES.iter().position(|n| *n == "falling_block").unwrap_or(0) as i32;
+                        let mut spawn = Writer::new();
+                        spawn.varint(entity).raw(&stand.uuid).varint(falling);
+                        spawn.f64(at[0]).f64(at[1]).f64(at[2]);
+                        spawn.u8(0).u8(0).u8(0).varint(state).i16(0).i16(0).i16(0);
+                        out.push(Packet::new(old::ADD_ENTITY, spawn.into_inner()));
+                        // it must not fall
+                        let mut still = Writer::new();
+                        still.varint(entity).u8(5).varint(8).bool(true).u8(0xff);
+                        out.push(Packet::new(old::SET_ENTITY_DATA, still.into_inner()));
+                        // the fields left over were for the armor stand that has just gone
+                        return Ok(());
+                    }
+                    _ => {}
+                }
                 w.into_inner()
+            }
+            new::TELEPORT_ENTITY => {
+                // a display that moves takes its stand-in with it
+                let mut r = Reader::new(p);
+                let entity = r.varint().map_err(e)?;
+                match self.displays.get_mut(&entity) {
+                    Some(stand) => {
+                        stand.at = [r.f64().map_err(e)?, r.f64().map_err(e)?, r.f64().map_err(e)?];
+                        let at = stand.place(stand.at);
+                        let mut w = Writer::with_capacity(p.len());
+                        w.varint(entity).f64(at[0]).f64(at[1]).f64(at[2]).raw(r.remaining());
+                        w.into_inner()
+                    }
+                    None => p.to_vec(),
+                }
             }
             new::OPEN_SCREEN => match world::open_screen(p).map_err(e)? {
                 world::Screen::Open(v) => v,
@@ -265,6 +372,64 @@ mod tests {
         t.clientbound(State::Configuration, &Packet::new(5, vec![1, 2]), &mut out).unwrap();
         t.serverbound(State::Configuration, &Packet::new(2, vec![3]), &mut out).unwrap();
         assert_eq!(out.iter().map(|p| (p.id, p.payload.clone())).collect::<Vec<_>>(), vec![(5, vec![1, 2]), (2, vec![3])]);
+    }
+
+    /// The packets a real server sends for an item display holding a diamond and a block
+    /// display showing a chest (taken from Pumpkin, as the 1.19.4 step hands them on).
+    #[test]
+    fn item_and_block_displays_get_stand_ins() {
+        let ty = |n: &str| d::NEW_ENTITY_NAMES.iter().position(|x| *x == n).unwrap() as i32;
+        let old_ty = |n: &str| d::OLD_ENTITY_NAMES.iter().position(|x| *x == n).unwrap() as i32;
+        let spawn_at = |id: i32, ty: i32, at: [f64; 3]| {
+            let mut w = Writer::new();
+            w.varint(id).raw(&[7; 16]).varint(ty).f64(at[0]).f64(at[1]).f64(at[2]).u8(0).u8(0).u8(0).varint(0).i16(0).i16(0).i16(0);
+            w.into_inner()
+        };
+        let mut t = V1_19_4To1_19_3::new();
+
+        // an item display: an armor stand lower down, wearing the item
+        let out = cb(&mut t, new::ADD_ENTITY, spawn_at(20, ty("item_display"), [0.5, 120.35, 0.5]));
+        assert_eq!(out[0].payload, spawn_at(20, old_ty("armor_stand"), [0.5, 120.35 - HEAD_HEIGHT, 0.5]));
+        assert_eq!(out[1].payload[out[1].payload.len() - 4..], [15, 0, 0x10, 0xff], "an unseen marker, full size");
+        let mut data = Writer::new();
+        data.varint(20).u8(5).varint(8).bool(true);
+        data.u8(22).varint(7).bool(true).varint(1).u8(1).u8(0); // one of item 1, no tag
+        data.u8(23).varint(0).u8(0).u8(0xff);
+        let out = cb(&mut t, new::SET_ENTITY_DATA, data.into_inner());
+        assert_eq!(out.iter().map(|p| p.id).collect::<Vec<_>>(), vec![old::SET_EQUIPMENT, old::SET_ENTITY_DATA]);
+        assert_eq!(out[0].payload[..2], [20, 5]);
+        assert_eq!(out[0].payload[2], 1, "the item is there");
+        assert_eq!(out[1].payload, [20, 5, 8, 1, 0xff], "only the fields an armor stand has");
+        // it moves with the display
+        let mut tp = Writer::new();
+        tp.varint(20).f64(3.0).f64(70.0).f64(4.0).u8(9).u8(8).bool(false);
+        let out = cb(&mut t, new::TELEPORT_ENTITY, tp.into_inner());
+        let mut want = Writer::new();
+        want.varint(20).f64(3.0).f64(70.0 - HEAD_HEIGHT).f64(4.0).u8(9).u8(8).bool(false);
+        assert_eq!(out[0].payload, want.into_inner());
+
+        // a block display: a falling block that stays put, once the block is known
+        let out = cb(&mut t, new::ADD_ENTITY, spawn_at(21, ty("block_display"), [8.0, 64.0, -3.0]));
+        assert_eq!(out[0].payload, spawn_at(21, old_ty("armor_stand"), [8.0, 64.0, -3.0]));
+        let state = 2955;
+        let mut data = Writer::new();
+        data.varint(21).u8(22).varint(14).varint(state).u8(0xff);
+        let out = cb(&mut t, new::SET_ENTITY_DATA, data.buf.clone());
+        assert_eq!(out.iter().map(|p| p.id).collect::<Vec<_>>(), vec![old::REMOVE_ENTITIES, old::ADD_ENTITY, old::SET_ENTITY_DATA]);
+        assert_eq!(out[0].payload, [1, 21]);
+        let mut want = Writer::new();
+        want.varint(21).raw(&[7; 16]).varint(old_ty("falling_block")).f64(8.5).f64(64.0).f64(-2.5).u8(0).u8(0).u8(0).varint(items::block_state(state)).i16(0).i16(0).i16(0);
+        assert_eq!(out[1].payload, want.into_inner());
+        assert_eq!(out[2].payload, [21, 5, 8, 1, 0xff]);
+        // the same block again changes nothing; the server repeats its entity data often
+        let out = cb(&mut t, new::SET_ENTITY_DATA, data.into_inner());
+        assert_eq!(out.iter().map(|p| p.id).collect::<Vec<_>>(), vec![old::SET_ENTITY_DATA]);
+        // other entities are left alone
+        let mut tp = Writer::new();
+        tp.varint(99).f64(1.0).f64(2.0).f64(3.0).u8(0).u8(0).bool(true);
+        assert_eq!(cb(&mut t, new::TELEPORT_ENTITY, tp.buf.clone())[0].payload, tp.buf);
+        cb(&mut t, new::REMOVE_ENTITIES, vec![2, 20, 21]);
+        assert!(t.displays.is_empty());
     }
 
     #[test]

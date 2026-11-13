@@ -35,6 +35,7 @@ pub mod new {
     pub const SOUND_ENTITY: i32 = 97;
     pub const SOUND: i32 = 98;
     pub const STOP_SOUND: i32 = 99;
+    pub const TELEPORT_ENTITY: i32 = 104;
     pub const UPDATE_ADVANCEMENTS: i32 = 105;
     pub const UPDATE_RECIPES: i32 = 109;
     pub const UPDATE_TAGS: i32 = 110;
@@ -47,7 +48,9 @@ pub mod old {
     pub const ADD_ENTITY: i32 = 0;
     pub const ANIMATE: i32 = 3;
     pub const ENTITY_EVENT: i32 = 25;
+    pub const REMOVE_ENTITIES: i32 = 58;
     pub const SET_ENTITY_DATA: i32 = 78;
+    pub const SET_EQUIPMENT: i32 = 81;
     // serverbound play (1.19.3)
     pub const S_CONTAINER_CLICK: i32 = 10;
     pub const S_SET_CREATIVE_MODE_SLOT: i32 = 43;

@@ -191,13 +191,33 @@ pub fn spawn_data(kind: Option<Kind>) -> Option<Vec<u8>> {
     Some(w.into_inner())
 }
 
-/// SET_ENTITY_DATA body (after the entity id).
-pub fn entity_data(kind: Option<Kind>, r: &mut Reader, w: &mut Writer) -> Result<()> {
+/// What a block or item display shows, found in its entity data.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Shown {
+    /// The item, as 1.19.3 writes it.
+    Item(Vec<u8>),
+    /// The block state, as 1.19.3 numbers it.
+    Block(i32),
+}
+
+/// Whether the type is a block display (`Some(true)`), an item display (`Some(false)`) or neither.
+pub fn display_shows_block(ty: i32) -> Option<bool> {
+    match usize::try_from(ty).ok().and_then(|i| d::NEW_ENTITY_NAMES.get(i)).copied()? {
+        "block_display" => Some(true),
+        "item_display" => Some(false),
+        _ => None,
+    }
+}
+
+/// SET_ENTITY_DATA body (after the entity id). For a block or item display, also returns what
+/// it shows, when the data says.
+pub fn entity_data(kind: Option<Kind>, r: &mut Reader, w: &mut Writer) -> Result<Option<Shown>> {
+    let mut shown = None;
     loop {
         let mut index = r.u8()?;
         if index == 0xff {
             w.u8(0xff);
-            return Ok(());
+            return Ok(shown);
         }
         let ty = r.varint()?;
         // 1.19.4 put the optional block state at 15: it becomes the plain block state (14), and
@@ -300,6 +320,15 @@ pub fn entity_data(kind: Option<Kind>, r: &mut Reader, w: &mut Writer) -> Result
                 let Some(text) = text else { continue };
                 w.u8(2).varint(old_type::OPTIONAL_COMPONENT).bool(true).string(text);
                 w.u8(3).varint(old_type::BOOLEAN).bool(true);
+                continue;
+            }
+            // what a display shows is index 22: an item, or a block state
+            Some(Kind::Display) if index == 22 => {
+                match ty {
+                    7 => shown = Some(Shown::Item(v.buf.clone())),
+                    14 => shown = Reader::new(&v.buf).varint().ok().map(Shown::Block),
+                    _ => {}
+                }
                 continue;
             }
             // past the fields every entity has, displays share nothing with an armor stand

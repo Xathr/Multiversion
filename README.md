@@ -7,6 +7,8 @@ can join your 26.3 server: the plugin speaks their protocol version and translat
 and from Pumpkin's. It needs no Java, no separate proxy process and no extra port to open. Everything
 runs inside the server, as a WebAssembly plugin, configured by one `config.toml`.
 
+> **Note:** this plugin is an independent project. It has nothing to do with [Pumpkin-MC/pumpkin-java-multiversion](https://github.com/Pumpkin-MC/pumpkin-java-multiversion) and shares no code with it.
+
 ![Supported versions](market/screenshot-versions.png)
 
 | Client version | Status |

@@ -2,6 +2,8 @@
 
 **Multiversion** lets players on **Minecraft Java 1.19 through 26.3** join your Pumpkin server. Your friends no longer have to update, downgrade or install anything. It runs entirely inside the server as a WebAssembly plugin: **no proxy, no Java, no second process, no extra port.**
 
+> **Note:** this plugin is an independent project. It has nothing to do with [Pumpkin-MC/pumpkin-java-multiversion](https://github.com/Pumpkin-MC/pumpkin-java-multiversion) and shares no code with it.
+
 ![Supported versions](https://raw.githubusercontent.com/Xathr/Multiversion/main/market/screenshot-versions.png)
 
 ## Supported versions
@@ -84,7 +86,7 @@ You can also change the public and backend ports, online mode, the server-list v
 - 1.20.3 and 1.20.4 players see items the classic way (names, lore, enchantments, potions and the rest as item NBT); what their version can't show, such as new attributes, item rarity or food settings, is kept and restored when the item goes back to the server. Armadillos, bogged and the mace appear as cows, strays and a netherite axe, with their real names.
 - 1.20.2 and older players see 1.20.3's new blocks and mobs as similar older ones (breezes as blazes, the new tuff and copper blocks as their nearest match); crafter screens don't open for them.
 - 1.20 and 1.20.1 have no configuration step, so the plugin goes through it for them. Server resource packs are offered right after they join.
-- 1.19.3 and older players see 1.19.4's display entities as invisible markers, sniffers as ravagers and camels as donkeys, each with its real name.
+- 1.19.3 and older have no display entities: those players see a text display as a floating name, an item display as the item itself and a block display as a floating block (blocks drawn in a special way, such as chests and signs, stay unseen). They see sniffers as ravagers and camels as donkeys, each with its real name.
 - 1.19, 1.19.1 and 1.19.2 sign chat in a way newer versions cannot check. Their messages are sent unsigned, other players' chat reaches them as plain server messages, and they cannot chat on a server that enforces secure chat.
 - Built for Pumpkin 0.2.2 (Minecraft 26.3, plugin API v0.1).
 
