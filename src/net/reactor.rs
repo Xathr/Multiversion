@@ -70,6 +70,9 @@ pub struct Reactor {
     /// Connections whose send queue passed `max_pending_out` since the last loop turn.
     overflowed: Vec<Token>,
     pub max_pending_out: usize,
+    /// Nanoseconds spent waiting for something to happen, in all: what a turn of the loop took
+    /// minus this is the time it was busy.
+    pub waited_ns: u64,
 }
 
 fn to_wasi_addr(addr: SocketAddr) -> IpSocketAddress {
@@ -113,7 +116,7 @@ fn err(e: ErrorCode) -> String {
 
 impl Reactor {
     pub fn new() -> Self {
-        Self { network: instance_network(), listener: None, conns: HashMap::new(), externals: HashMap::new(), next_token: 1, tick_ms: 1000, stop: false, last_tick: None, overflowed: Vec::new(), max_pending_out: MAX_PENDING_OUT }
+        Self { network: instance_network(), listener: None, conns: HashMap::new(), externals: HashMap::new(), next_token: 1, tick_ms: 1000, stop: false, last_tick: None, overflowed: Vec::new(), max_pending_out: MAX_PENDING_OUT, waited_ns: 0 }
     }
 
     /// Binds and listens. Blocks until the bind completes (it is quick).
@@ -299,7 +302,9 @@ impl Reactor {
                 refs.push(&self.externals[id]);
                 kinds.push((5, *id));
             }
+            let waiting = wasip2::clocks::monotonic_clock::now();
             let ready: Vec<u32> = poll::poll(&refs);
+            self.waited_ns += wasip2::clocks::monotonic_clock::now().saturating_sub(waiting);
             // Drop every pollable before touching sockets/streams: WASI refuses to drop a resource
             // that still has live children (its pollables).
             drop(refs);

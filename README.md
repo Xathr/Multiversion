@@ -258,6 +258,10 @@ Known gaps: text components inside NBT (hover "show item") are not rewritten; 26
 and items show as their nearest 26.2 equivalent (poplar as birch, wool stairs as other stairs);
 cushions appear as carpet blocks; new enchantment effect definitions are not shown.
 
+## Performance monitoring
+
+With [perfmon](https://github.com/Xathr/Perfmon) installed, `/perf plugins` shows this plugin's memory, how busy its proxy loop is and its open connections. Multiversion reports those numbers itself; nothing needs setting up. Its work runs beside the server tick, so perfmon shows it as CPU used, not as tick time.
+
 ## Build from source
 
 ```bash

@@ -363,11 +363,21 @@ static PROXY: std::sync::Mutex<Option<Proxy>> = std::sync::Mutex::new(None);
 /// per server tick, and returns control to the host in between.
 pub const SLICE_MS: u64 = 45;
 
+/// Open client connections, for the report to perfmon (which may be asked for while the loop
+/// above is in the middle of a turn, and so cannot look at the proxy itself).
+pub static CONNECTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Runs one slice of the proxy loop. Called from a repeating scheduled task every tick.
 pub fn tick() {
     let mut guard = PROXY.lock().unwrap_or_else(|p| p.into_inner());
     let Some(proxy) = guard.as_mut() else { return };
+    let started = std::time::Instant::now();
+    let waited = proxy.reactor.waited_ns;
     proxy.reactor.run_for(&mut proxy.handler, SLICE_MS);
+    // what the turn took, less the time it sat waiting for the network
+    let busy_us = (started.elapsed().as_micros() as u64).saturating_sub((proxy.reactor.waited_ns - waited) / 1000);
+    crate::report::add(busy_us);
+    CONNECTIONS.store(proxy.handler.conns.len(), std::sync::atomic::Ordering::Relaxed);
     if proxy.reactor.stopped() {
         log::info(&crate::color::warn("proxy stopped"));
         *guard = None;

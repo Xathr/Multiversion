@@ -17,6 +17,7 @@ pub mod net;
 pub mod platform;
 pub mod proto;
 pub mod ratelimit;
+pub mod report;
 pub mod translate;
 pub mod update;
 
@@ -150,6 +151,25 @@ mod plugin {
         config: Mutex<Option<crate::config::Config>>,
     }
 
+    /// Ticks until Multiversion next introduces itself to perfmon; `u32::MAX` once perfmon
+    /// has answered.
+    static INTRODUCE_IN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(40);
+
+    /// Tells perfmon (if it is installed) that Multiversion answers its report, so it is watched
+    /// without the admin listing it. Tried again every minute until perfmon answers: it may
+    /// load later.
+    fn introduce() {
+        use std::sync::atomic::Ordering::Relaxed;
+        match INTRODUCE_IN.load(Relaxed) {
+            u32::MAX => {}
+            0 => {
+                let heard = matches!(pumpkin_plugin_api::ipc::send_ipc_message("perfmon", &crate::report::hello("multiversion")), Ok(Ok(_)));
+                INTRODUCE_IN.store(if heard { u32::MAX } else { 1200 }, Relaxed);
+            }
+            left => INTRODUCE_IN.store(left - 1, Relaxed),
+        }
+    }
+
     impl Plugin for MultiVersion {
         fn new() -> Self {
             Self { config: Mutex::new(None) }
@@ -169,6 +189,18 @@ mod plugin {
                     permissions::FS_WRITE_DATA.into(),    // write default config on first start, downloaded updates
                 ],
             }
+        }
+
+        /// The one message Multiversion answers: a performance monitor asking for its numbers.
+        /// This can arrive while the proxy loop is waiting inside its turn, so it reads nothing
+        /// the loop holds on to: the counts it reports are kept beside it (`proxy::CONNECTIONS`).
+        fn handle_ipc_message(&self, _sender: String, message: Vec<u8>) -> Result<Vec<u8>, String> {
+            if !crate::report::is_ask(&message) {
+                return Err("multiversion only answers {\"perfmon\":1,\"ask\":\"report\"}".into());
+            }
+            let memory = core::arch::wasm32::memory_size(0) as u64 * 65_536;
+            let connections = crate::proxy::CONNECTIONS.load(std::sync::atomic::Ordering::Relaxed);
+            Ok(crate::report::answer("multiversion", env!("CARGO_PKG_VERSION"), memory, &[("connections", connections as f64)]))
         }
 
         fn on_load(&self, context: Context) -> pumpkin_plugin_api::Result<()> {
@@ -224,7 +256,10 @@ mod plugin {
             // Bind now; then run the proxy loop in short slices, one per server tick, so Pumpkin
             // can still call our other hooks (and unload us on shutdown) in between.
             if crate::proxy::start(config.clone()).map_err(|e| format!("multiversion: {e}"))? {
-                context.schedule_repeating_task(1, 1, |_server| crate::proxy::tick());
+                context.schedule_repeating_task(1, 1, |_server| {
+                    crate::proxy::tick();
+                    introduce();
+                });
             } else {
                 // Pumpkin still holds the public port: this is a first start. Stay loaded and say
                 // what to do, rather than fail with an error.
