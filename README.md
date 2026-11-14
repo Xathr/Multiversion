@@ -283,6 +283,7 @@ src/proxy.rs          reactor handler: sockets ↔ connections, timeouts
 src/translate/        Translator trait + chain; one module per version step (v26_2/ = 26.3 ↔ 26.2, ...)
 tools/gen_mappings.py regenerates the src/translate/data_*.rs id tables
 tools/pack_names.py  packs their name lists into one shared pool (run after gen_mappings.py)
+tools/shrink_wasm.py makes a built plugin about a tenth smaller with binaryen's wasm-opt (releases use it)
 ```
 
 ### Adding the next version step

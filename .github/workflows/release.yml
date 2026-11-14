@@ -40,6 +40,11 @@ jobs:
       - name: Build Multiversion.wasm
         run: ./build.sh
 
+      # About a tenth smaller, same behaviour: see tools/shrink_wasm.py. The plugin is left as
+      # built if anything about the result looks wrong, and the step fails.
+      - name: Shrink Multiversion.wasm
+        run: python3 tools/shrink_wasm.py target/wasm32-wasip2/release/Multiversion.wasm --wasm-opt "npx --yes -p binaryen@132.0.0 wasm-opt"
+
       - uses: actions/upload-artifact@v4
         with:
           name: multiversion

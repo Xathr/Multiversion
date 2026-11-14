@@ -1,28 +1,61 @@
 //! Login encryption (RSA key exchange, AES key), the Mojang session check, and HMAC signing for
 //! the Velocity-style forwarding payload that Pumpkin verifies.
 
+use std::cell::OnceCell;
+
 use hmac::{Hmac, Mac};
 use rsa::pkcs8::EncodePublicKey;
 use rsa::{Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
 use sha1::{Digest, Sha1};
 use sha2::Sha256;
 
+/// The server's RSA key pair for login encryption. Only online-mode logins use it, so it can be
+/// left unmade ([`ServerKeys::deferred`]) until one asks for it: making a key is the slowest
+/// thing the plugin does when it starts, and an offline-mode server never needs one.
 pub struct ServerKeys {
-    private: RsaPrivateKey,
-    /// DER-encoded SubjectPublicKeyInfo, as sent in the encryption request.
-    pub public_der: Vec<u8>,
+    pair: OnceCell<Result<KeyPair, String>>,
 }
 
-impl ServerKeys {
-    pub fn generate() -> Result<Self, String> {
+struct KeyPair {
+    private: RsaPrivateKey,
+    /// DER-encoded SubjectPublicKeyInfo, as sent in the encryption request.
+    public_der: Vec<u8>,
+}
+
+impl KeyPair {
+    fn generate() -> Result<Self, String> {
         let mut rng = WasiRng;
         let private = RsaPrivateKey::new(&mut rng, 1024).map_err(|e| format!("rsa keygen: {e}"))?;
         let public = RsaPublicKey::from(&private);
         let public_der = public.to_public_key_der().map_err(|e| e.to_string())?.as_bytes().to_vec();
         Ok(Self { private, public_der })
     }
+}
+
+impl ServerKeys {
+    /// Makes the key pair now.
+    pub fn generate() -> Result<Self, String> {
+        let keys = Self::deferred();
+        keys.pair()?;
+        Ok(keys)
+    }
+    /// Makes the key pair the first time it is needed.
+    pub fn deferred() -> Self {
+        Self { pair: OnceCell::new() }
+    }
+    /// Whether the key pair exists yet.
+    pub fn is_made(&self) -> bool {
+        self.pair.get().is_some()
+    }
+    fn pair(&self) -> Result<&KeyPair, String> {
+        self.pair.get_or_init(KeyPair::generate).as_ref().map_err(Clone::clone)
+    }
+    /// DER-encoded SubjectPublicKeyInfo, as sent in the encryption request.
+    pub fn public_der(&self) -> Result<&[u8], String> {
+        self.pair().map(|pair| &pair.public_der[..])
+    }
     pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>, String> {
-        self.private.decrypt(Pkcs1v15Encrypt, data).map_err(|e| format!("rsa decrypt: {e}"))
+        self.pair()?.private.decrypt(Pkcs1v15Encrypt, data).map_err(|e| format!("rsa decrypt: {e}"))
     }
 }
 
@@ -104,5 +137,48 @@ mod tests {
         assert_eq!(server_hash("Notch", b"", b""), "4ed1f46bbe04bc756bcb17c0c7ce3e4632f06a48");
         assert_eq!(server_hash("jeb_", b"", b""), "-7c9d5b0044c130109a5d7b5fb5c317c02b4e28c1");
         assert_eq!(server_hash("simon", b"", b""), "88e16a1019277b15d58faf0541e11910eb756f6");
+    }
+
+    fn encrypt_for(keys: &ServerKeys, data: &[u8]) -> Vec<u8> {
+        use rsa::pkcs8::DecodePublicKey;
+        let public = RsaPublicKey::from_public_key_der(keys.public_der().unwrap()).unwrap();
+        public.encrypt(&mut WasiRng, Pkcs1v15Encrypt, data).unwrap()
+    }
+
+    /// What a client encrypts with the public key it was sent, the server can read.
+    #[test]
+    fn keys_decrypt_what_clients_encrypt() {
+        let keys = ServerKeys::generate().unwrap();
+        assert!(keys.is_made());
+        let secret = [7u8; 16];
+        assert_eq!(keys.decrypt(&encrypt_for(&keys, &secret)).unwrap(), secret);
+        assert_eq!(keys.decrypt(&encrypt_for(&keys, &[1, 2, 3, 4])).unwrap(), [1, 2, 3, 4]);
+        // not something this key encrypted
+        assert!(keys.decrypt(&[0u8; 128]).is_err());
+        assert!(keys.decrypt(&[1, 2, 3]).is_err());
+        // a 1024-bit key, in the form the game reads
+        assert_eq!(keys.public_der().unwrap().len(), 162);
+        // another server has another key
+        let other = ServerKeys::generate().unwrap();
+        assert_ne!(other.public_der().unwrap(), keys.public_der().unwrap());
+        assert!(other.decrypt(&encrypt_for(&keys, &secret)).map_or(true, |plain| plain != secret));
+    }
+
+    /// A deferred key pair is made on first use and is the same one from then on.
+    #[test]
+    fn deferred_keys_are_made_once_on_first_use() {
+        let keys = ServerKeys::deferred();
+        assert!(!keys.is_made());
+        let der = keys.public_der().unwrap().to_vec();
+        assert!(keys.is_made());
+        assert_eq!(keys.public_der().unwrap(), der);
+        let secret = [9u8; 16];
+        assert_eq!(keys.decrypt(&encrypt_for(&keys, &secret)).unwrap(), secret);
+        assert_eq!(keys.public_der().unwrap(), der);
+
+        // decrypting is also a first use
+        let keys = ServerKeys::deferred();
+        assert!(keys.decrypt(&[0u8; 128]).is_err());
+        assert!(keys.is_made());
     }
 }

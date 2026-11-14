@@ -395,7 +395,7 @@ impl Connection {
         debug_log(out, || format!("{} login start as {name} ({} mode)", self.peer, if online { "online" } else { "offline" }));
         if shared.config.auth.online_mode {
             self.verify_token = crypto::random_bytes(4);
-            let pkt = self.encode_encryption_request(&shared.keys.public_der);
+            let pkt = self.encode_encryption_request(shared.keys.public_der()?);
             self.client_pkt(&pkt, out);
             self.phase = Phase::LoginAwaitKey;
             Ok(())
@@ -428,7 +428,7 @@ impl Connection {
         }
         self.client_in.enable_encryption(key);
         self.client_out.enable_encryption(key);
-        let hash = crypto::server_hash("", &secret, &shared.keys.public_der);
+        let hash = crypto::server_hash("", &secret, shared.keys.public_der().map_err(|_| FAILED)?);
         let ip = if shared.config.auth.prevent_proxy_connections { Some(self.peer.ip().to_string()) } else { None };
         self.phase = Phase::LoginAuth;
         debug_log(out, || format!("{} encryption set up, checking the session with Mojang", self.username));

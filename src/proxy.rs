@@ -374,7 +374,7 @@ pub fn tick() {
     }
 }
 
-/// Sets the proxy up (keys, listener). After this, `tick` drives it. `Ok(false)` if the public
+/// Sets the proxy up (keys for online mode, listener). After this, `tick` drives it. `Ok(false)` if the public
 /// port is taken, which on a first start means Pumpkin itself still has it.
 pub fn start(config: Config) -> Result<bool, String> {
     let listen = resolve(&config.listen.address)?;
@@ -385,7 +385,9 @@ pub fn start(config: Config) -> Result<bool, String> {
              and the forwarding secret is all that stops them logging in as anyone. Use 127.0.0.1, or firewall that port."
         ));
     }
-    let keys = ServerKeys::generate()?;
+    // Only online-mode logins are encrypted. Made now for those, so the first player doesn't
+    // wait for it; an offline-mode server skips it (and would still make one on demand).
+    let keys = if config.auth.online_mode { ServerKeys::generate()? } else { ServerKeys::deferred() };
     let mut reactor = Reactor::new();
     if let Err(e) = reactor.listen(listen, 128) {
         if e.contains("address-in-use") || e.contains("AddressInUse") {
