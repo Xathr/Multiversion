@@ -13,6 +13,7 @@ pub mod banner;
 pub mod color;
 pub mod config;
 pub mod crypto;
+pub mod i18n;
 pub mod net;
 pub mod platform;
 pub mod proto;
@@ -72,7 +73,12 @@ mod plugin {
             };
             // Builds a line with colours on for chat, whatever console_colors says.
             let coloured = |f: &dyn Fn() -> String| if console { f() } else { crate::color::with_colours(f) };
-            let say = |line: &str| send(&coloured(&|| crate::color::dim(line)));
+            // A player reads the replies in their game's language; the console in English.
+            let locale = match sender.as_player() {
+                Some(player) => player.get_locale(),
+                None => crate::i18n::DEFAULT.to_string(),
+            };
+            let say = |key: &str| send(&coloured(&|| crate::color::dim(&crate::i18n::text(&locale, key, &[]))));
             match self.0 {
                 None => {
                     let lines = if console { updater::lines(&updater::status()) } else { crate::color::with_colours(|| updater::lines(&updater::status())) };
@@ -80,19 +86,19 @@ mod plugin {
                         send(&line);
                     }
                     if console {
-                        say("commands: /multiversion update check, /multiversion update download");
-                    } else if let Ok(buttons) = TextComponent::from_json(&update_buttons()) {
+                        say("command.usage");
+                    } else if let Ok(buttons) = TextComponent::from_json(&update_buttons(&locale)) {
                         sender.send_message(buttons);
                     }
                 }
                 // The proxy runs the request between packets, so players never wait on the Market.
                 Some(job) => {
                     if matches!(job, Job::Download) && !matches!(updater::status(), Status::Available { .. }) {
-                        say("there is no newer version to download; run /multiversion update check first");
+                        say("command.nothing_to_download");
                     } else if updater::request(job) {
-                        say("asking the Pumpkin Market; the result is logged to the console, and /multiversion update shows it");
+                        say("command.asking");
                     } else {
-                        say("an update request is already running");
+                        say("command.busy");
                     }
                 }
             }
@@ -101,16 +107,18 @@ mod plugin {
     }
 
     /// Clickable [Check now] and [Download] for chat.
-    fn update_buttons() -> String {
+    fn update_buttons(locale: &str) -> String {
+        let tr = |key: &str| crate::i18n::text(locale, key, &[]);
         let button = |label: &str, command: &str, hover: &str| {
-            serde_json::json!({ "text": format!("[{label}]"), "color": "aqua",
+            let click = crate::i18n::text(locale, "update.click_to_run", &[("command", command)]);
+            serde_json::json!({ "text": format!("[{}]", tr(label)), "color": "aqua",
                 "click_event": { "action": "run_command", "command": command },
-                "hover_event": { "action": "show_text", "value": [{ "text": format!("{hover}\nClick to run {command}"), "color": "gray" }] } })
+                "hover_event": { "action": "show_text", "value": [{ "text": format!("{}\n{click}", tr(hover)), "color": "gray" }] } })
         };
         serde_json::json!({ "text": "", "extra": [
-            button("Check now", "/multiversion update check", "Ask the Pumpkin Market for the latest version"),
+            button("update.check", "/multiversion update check", "update.check_hover"),
             { "text": " ", "color": "gray" },
-            button("Download", "/multiversion update download", "Save the Market's signed Multiversion.wasm in the data folder"),
+            button("update.download", "/multiversion update download", "update.download_hover"),
         ]})
         .to_string()
     }
@@ -125,17 +133,21 @@ mod plugin {
                 pumpkin_plugin_api::scheduler::schedule_delayed_task(JOIN_NOTICE_DELAY_TICKS, move |server| {
                     let Status::Available { latest, .. } = updater::status() else { return };
                     let Some(player) = server.get_player_by_uuid(id) else { return };
+                    // in the language the player's game is set to
+                    let locale = player.get_locale();
+                    let tr = |key: &str, values: &[(&str, &str)]| crate::i18n::text(&locale, key, values);
+                    let click = tr("update.click_to_run", &[("command", "/multiversion update")]);
                     let line = serde_json::json!({ "text": "", "extra": [
                         { "text": "[Multiversion] ", "color": "blue" },
-                        { "text": format!("v{latest} is out"), "color": "yellow" },
-                        { "text": format!(" (this server runs v{}). ", updater::VERSION), "color": "gray" },
-                        { "text": "[Pumpkin Market]", "color": "aqua",
+                        { "text": tr("update.out", &[("latest", &latest)]), "color": "yellow" },
+                        { "text": tr("update.runs", &[("current", updater::VERSION)]), "color": "gray" },
+                        { "text": tr("update.market", &[]), "color": "aqua",
                           "click_event": { "action": "open_url", "url": crate::update::PAGE_URL },
                           "hover_event": { "action": "show_text", "value": [{ "text": crate::update::PAGE_URL, "color": "gray" }] } },
                         { "text": " ", "color": "gray" },
-                        { "text": "[Details]", "color": "aqua",
+                        { "text": tr("update.details", &[]), "color": "aqua",
                           "click_event": { "action": "run_command", "command": "/multiversion update" },
-                          "hover_event": { "action": "show_text", "value": [{ "text": "Update status and download\nClick to run /multiversion update", "color": "gray" }] } },
+                          "hover_event": { "action": "show_text", "value": [{ "text": format!("{}\n{click}", tr("update.details_hover", &[])), "color": "gray" }] } },
                     ]})
                     .to_string();
                     if let Ok(component) = TextComponent::from_json(&line) {
@@ -209,6 +221,10 @@ mod plugin {
             let config = crate::config::Config::load_or_create(&path).map_err(|e| format!("multiversion: {e}"))?;
             crate::color::set_enabled(config.console_colors);
             crate::config::set_active(config.clone());
+            // Text for players: the built-in languages plus whatever is in the lang folder.
+            let (catalog, problems) = crate::i18n::load_folder(&format!("{folder}/lang"));
+            let languages = catalog.languages().len();
+            crate::i18n::install(catalog);
             // Pumpkin lets a plugin write only its own data folder, so the pumpkin.toml settings
             // it needs are written out ready to paste, and checked for at runtime.
             let snippet = crate::config::pumpkin_snippet(&config);
@@ -223,6 +239,16 @@ mod plugin {
             };
             for line in crate::banner::lines(&info) {
                 crate::log::info(&line);
+            }
+            let language = &config.messages.language;
+            let chosen = if crate::i18n::normalise(language) == "auto" { "auto (English, and the game's own words where it has them)".to_string() } else { language.clone() };
+            crate::log::info(&format!("  {}     {languages} in plugins/data/multiversion/lang; messages.language = {chosen}", crate::color::dim("languages")));
+            for problem in &problems {
+                crate::log::warn(&format!("language file {problem}"));
+            }
+            let wanted = crate::i18n::server_language(language);
+            if crate::i18n::normalise(language) != "auto" && !crate::i18n::has(&wanted) {
+                crate::log::warn(&format!("messages.language = \"{language}\" has no file in the lang folder: players get English. Add lang/{wanted}.json or pick one that is there."));
             }
             if config.backend.forwarding_secret.is_empty() {
                 crate::log::warn("backend.forwarding_secret is empty; Pumpkin will reject logins. Set it in config.toml and pumpkin.toml.");

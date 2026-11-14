@@ -163,11 +163,30 @@ impl Connection {
         out.push(Action::SendBackend(bytes));
     }
 
+    /// Disconnects the client with one of the plugin's messages, by its language key: in the
+    /// admin's own wording if they set one, else from the language files.
+    fn kick_key(&mut self, key: &str, values: &[(&str, &str)], out: &mut Vec<Action>) {
+        let messages = &config::get().messages;
+        match messages.custom(key) {
+            Some(own) => self.kick_json(&crate::i18n::fill(own, values), out),
+            None => {
+                let json = crate::i18n::kick(&messages.language, self.client_version.protocol, key, values);
+                // the console reads English, whatever the player was told
+                let reason = crate::i18n::text(crate::i18n::DEFAULT, key, values);
+                self.kick_component(&json, &reason, out);
+            }
+        }
+    }
+
     fn kick_json(&mut self, message: &str, out: &mut Vec<Action>) {
-        // Login disconnect takes a JSON text component (all supported versions).
         let json = serde_json::json!({ "text": message }).to_string();
+        self.kick_component(&json, message, out);
+    }
+
+    /// Sends a login disconnect (a JSON text component, in all supported versions) and closes.
+    fn kick_component(&mut self, json: &str, message: &str, out: &mut Vec<Action>) {
         let mut w = Writer::new();
-        w.string(&json);
+        w.string(json);
         let pkt = Packet::new(ids::LOGIN_C_DISCONNECT, w.into_inner());
         if matches!(self.phase, Phase::LoginStart | Phase::LoginAwaitKey | Phase::LoginAuth | Phase::BackendConnecting | Phase::BackendLogin) {
             self.client_pkt(&pkt, out);
@@ -192,7 +211,7 @@ impl Connection {
                 }
                 Ok(None) => return,
                 Err(e) => {
-                    self.kick_json(&config::get().messages.protocol_error.replace("{error}", &e.to_string()), out);
+                    self.kick_key("kick.protocol_error", &[("error", &e.to_string())], out);
                     return;
                 }
             }
@@ -273,12 +292,16 @@ impl Connection {
             2 | 3 => {
                 if !translate::is_supported(self.client_version) || !shared.config.versions.permits(self.client_version) {
                     self.phase = Phase::LoginStart; // so the kick is delivered as a login disconnect
-                    let msg = shared
-                        .config
-                        .versions
-                        .kick_unsupported_message
-                        .replace("{versions}", &translate::allowed_range(&shared.config.versions))
-                        .replace("{client}", &self.client_version.name());
+                    // Sent before the client has said anything about itself, and to clients of any
+                    // age: plain text in the server's language, or the admin's own wording.
+                    let values = [("versions", translate::allowed_range(&shared.config.versions)), ("client", self.client_version.name())];
+                    let values: Vec<(&str, &str)> = values.iter().map(|(name, value)| (*name, value.as_str())).collect();
+                    let own = &shared.config.versions.kick_unsupported_message;
+                    let msg = if *own != crate::config::Versions::default().kick_unsupported_message {
+                        crate::i18n::fill(own, &values)
+                    } else {
+                        crate::i18n::text(&crate::i18n::server_language(&shared.config.messages.language), "kick.unsupported_version", &values)
+                    };
                     return Err(msg);
                 }
                 self.chain = Chain::for_client(self.client_version);
@@ -441,7 +464,7 @@ impl Connection {
         match result {
             crate::auth::AuthOutcome::Ok(profile) => {
                 if !profile.name.eq_ignore_ascii_case(&self.username) {
-                    self.kick_json(&config::get().messages.username_mismatch, out);
+                    self.kick_key("kick.username_mismatch", &[], out);
                     return;
                 }
                 self.username = profile.name.clone();
@@ -450,11 +473,11 @@ impl Connection {
                 self.after_auth(shared, out);
             }
             crate::auth::AuthOutcome::InvalidSession => {
-                self.kick_json(&config::get().messages.invalid_session, out);
+                self.kick_key("kick.invalid_session", &[], out);
             }
             crate::auth::AuthOutcome::Error(e) => {
                 err_log(out, color::bad(&format!("session check failed for {}: {e}", self.username)));
-                self.kick_json(&config::get().messages.auth_servers_down, out);
+                self.kick_key("kick.auth_servers_down", &[], out);
             }
         }
     }
@@ -505,7 +528,7 @@ impl Connection {
             Phase::StatusBackendHandshake => self.finish_status(None, shared, out),
             _ => {
                 err_log(out, color::bad(&format!("backend connect failed: {error}")));
-                self.kick_json(&config::get().messages.server_starting, out);
+                self.kick_key("kick.server_starting", &[], out);
             }
         }
     }
@@ -526,9 +549,7 @@ impl Connection {
                 Ok(Some(crate::proto::frame::Frame::Packet(pkt))) => {
                     if let Err(e) = self.handle_backend_packet(pkt, shared, out) {
                         err_log(out, color::bad(&format!("backend packet error for {}: {e}", self.username)));
-                        let m = &config::get().messages;
-                        let msg = if e.contains("pumpkin.toml") { m.misconfigured.as_str() } else { m.internal_error.as_str() };
-                        self.kick_json(msg, out);
+                        self.kick_key(if e.contains("pumpkin.toml") { "kick.misconfigured" } else { "kick.internal_error" }, &[], out);
                         return;
                     }
                     if self.phase == Phase::Closed {
@@ -538,7 +559,7 @@ impl Connection {
                 Ok(None) => return,
                 Err(e) => {
                     err_log(out, color::bad(&format!("backend framing error: {e}")));
-                    self.kick_json(&config::get().messages.internal_error, out);
+                    self.kick_key("kick.internal_error", &[], out);
                     return;
                 }
             }

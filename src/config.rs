@@ -159,10 +159,35 @@ impl Default for Limits {
     }
 }
 
-/// Messages players see when they are disconnected.
+impl Messages {
+    /// The admin's own wording for the message with this language key, if they changed it in
+    /// config.toml. Their wording wins over the language files.
+    pub fn custom(&self, key: &str) -> Option<&str> {
+        let default = Self::default();
+        let (mine, original) = match key {
+            "kick.server_starting" => (&self.server_starting, default.server_starting),
+            "kick.auth_servers_down" => (&self.auth_servers_down, default.auth_servers_down),
+            "kick.invalid_session" => (&self.invalid_session, default.invalid_session),
+            "kick.username_mismatch" => (&self.username_mismatch, default.username_mismatch),
+            "kick.internal_error" => (&self.internal_error, default.internal_error),
+            "kick.misconfigured" => (&self.misconfigured, default.misconfigured),
+            "kick.protocol_error" => (&self.protocol_error, default.protocol_error),
+            _ => return None,
+        };
+        (*mine != original).then_some(mine.as_str())
+    }
+}
+
+/// Messages players see when they are disconnected. The text here is English and is what the
+/// `lang` files start from: leave a line as it is to use the language files, change it to use
+/// your own wording in every language.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Messages {
+    /// The language of these messages: a locale that has a file in the `lang` folder ("de_de"),
+    /// or "auto" for English, with the game's own words (in each player's language) for the
+    /// messages the game has.
+    pub language: String,
     /// Pumpkin isn't accepting connections yet (starting up or stopped).
     pub server_starting: String,
     /// Mojang's session servers couldn't be reached.
@@ -182,6 +207,7 @@ pub struct Messages {
 impl Default for Messages {
     fn default() -> Self {
         Self {
+            language: "auto".into(),
             server_starting: "The server is starting up. Please try again in a moment.".into(),
             auth_servers_down: "Authentication servers are down. Please try again later, sorry!".into(),
             invalid_session: "Invalid session (Try restarting your game and the launcher)".into(),
@@ -557,6 +583,34 @@ mod version_selector_tests {
 #[cfg(test)]
 mod snippet_tests {
     use super::*;
+
+    /// A message left as config.toml came is translated; one the admin reworded is theirs.
+    #[test]
+    fn reworded_messages_win_over_the_language_files() {
+        let mut m = Messages::default();
+        assert_eq!(m.language, "auto");
+        for key in ["kick.server_starting", "kick.auth_servers_down", "kick.invalid_session", "kick.username_mismatch", "kick.internal_error", "kick.misconfigured", "kick.protocol_error"] {
+            assert_eq!(m.custom(key), None, "{key}");
+            // the built-in English is the same text as the config default
+            assert_eq!(crate::i18n::Catalog::bundled().get("en_us", key), match key {
+                "kick.server_starting" => &m.server_starting,
+                "kick.auth_servers_down" => &m.auth_servers_down,
+                "kick.invalid_session" => &m.invalid_session,
+                "kick.username_mismatch" => &m.username_mismatch,
+                "kick.internal_error" => &m.internal_error,
+                "kick.misconfigured" => &m.misconfigured,
+                _ => &m.protocol_error,
+            });
+        }
+        assert_eq!(crate::i18n::Catalog::bundled().get("en_us", "kick.unsupported_version"), Versions::default().kick_unsupported_message);
+        m.invalid_session = "Log in again, please".into();
+        assert_eq!(m.custom("kick.invalid_session"), Some("Log in again, please"));
+        assert_eq!(m.custom("kick.internal_error"), None);
+        assert_eq!(m.custom("update.out"), None);
+        // a config from before languages existed
+        let old: Config = toml::from_str("[messages]\nusername_mismatch = \"Wrong name\"").unwrap();
+        assert_eq!((old.messages.language.as_str(), old.messages.custom("kick.username_mismatch")), ("auto", Some("Wrong name")));
+    }
 
     #[test]
     fn logins_per_ip() {

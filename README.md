@@ -212,6 +212,7 @@ notify_ops = true                  # tell operators in game when a newer version
 download = false                   # download a newer, Market-signed Multiversion.wasm at startup
 
 [messages]                         # what players see when they're disconnected
+language = "auto"                  # a locale with a file in lang/ ("de_de"), or "auto": see Languages below
 server_starting = "The server is starting up. Please try again in a moment."
 auth_servers_down = "Authentication servers are down. Please try again later, sorry!"
 invalid_session = "Invalid session (Try restarting your game and the launcher)"
@@ -258,6 +259,34 @@ Known gaps: text components inside NBT (hover "show item") are not rewritten; 26
 and items show as their nearest 26.2 equivalent (poplar as birch, wool stairs as other stairs);
 cushions appear as carpet blocks; new enchantment effect definitions are not shown.
 
+## Languages
+
+Every message a player can see is in a language file, one per language, in
+`plugins/data/multiversion/lang/`. The plugin writes the ones it comes with there on first
+start: English, German, Spanish, French, Italian, Japanese, Korean, Dutch, Polish, Portuguese
+(Brazil), Russian, Turkish and Chinese (simplified).
+
+- **To add a language**, copy `en_us.json` to a file named after the Minecraft locale, such as
+  `sv_se.json`, translate the texts and restart. Nothing else needs changing.
+- **To reword a message**, edit it in the file. A file only has to hold the texts it changes:
+  anything it leaves out comes from the built-in text, then from English.
+- A broken file is reported in the console and skipped; the others still load.
+
+Which language a player gets:
+
+| Message | Language |
+|---|---|
+| The update notice operators see in game, and replies to `/multiversion update` | The player's own game language (`es_mx` reads `es_es.json` if there is no `es_mx.json`), English if there is no file for it |
+| Kick messages while joining | `[messages] language` in `config.toml`, because a client has not said what language it uses yet |
+
+With `language = "auto"` (the default) kick messages are in English, except the two the game has
+its own words for (an invalid session, and Mojang's login servers being down): those are sent as
+the game's own message, so every player reads them in their own language.
+
+A message you have reworded in `[messages]` in `config.toml` is used as you wrote it, in every
+language. The console is always in English. The translations that come with the plugin have not
+been checked by native speakers; corrections are welcome.
+
 ## Performance monitoring
 
 With [perfmon](https://github.com/Xathr/Perfmon) installed, `/perf plugins` shows this plugin's memory, how busy its proxy loop is and its open connections. Multiversion reports those numbers itself; nothing needs setting up. Its work runs beside the server tick, so perfmon shows it as CPU used, not as tick time.
@@ -274,6 +303,7 @@ cargo test --release   # native unit tests
 ```
 src/lib.rs            plugin entry (metadata, on_load, scheduled proxy task)
 src/config.rs         config.toml
+src/i18n.rs           language files: the built-in ones (lang/*.json) and the ones in the data folder
 src/net/reactor.rs    poll-based reactor over WASI 0.2 TCP sockets
 src/proto/            varint/strings, NBT, framing (zlib, AES-CFB8), version table
 src/crypto.rs         RSA key pair, server hash, HMAC
