@@ -32,10 +32,13 @@ runs inside the server, as a WebAssembly plugin, configured by one `config.toml`
 | 1.19.3 (protocol 761) | translated |
 | 1.19.1 / 1.19.2 (protocol 760) | translated (chat is unsigned, see below) |
 | 1.19 (protocol 759) | translated (chat is unsigned, see below) |
+| 1.18.2 (protocol 758) | translated (chat is unsigned, see below) |
+| 1.18 / 1.18.1 (protocol 757) | translated (chat is unsigned, see below) |
 
-1.19 to 1.19.2 sign chat in a way newer versions cannot check, so those players' messages reach
-the server unsigned and other players' chat reaches them as plain server messages (no reporting,
-no "hide this player's messages"). They cannot chat on a server that enforces secure chat.
+1.19 to 1.19.2 sign chat in a way newer versions cannot check, and 1.18 does not sign chat at all,
+so those players' messages reach the server unsigned and other players' chat reaches them as plain
+server messages (no reporting, no "hide this player's messages"). They cannot chat on a server
+that enforces secure chat.
 
 Content an older client doesn't have shows as its nearest equivalent: new mobs as similar old mobs,
 new items and blocks as similar old ones. Translation has been checked with unit tests on hand-built
@@ -63,7 +66,7 @@ player (26.2) ──► plugin listener :25565 ──► translator chain ──
    verified profile, signed with the shared secret. Pumpkin's built-in Velocity forwarding verifies
    it, so players keep their real UUID, skin and IP and nobody can forge an identity.
 3. **Translation.** Configuration and play packets go through a chain of per-version translators
-   (26.3→26.2→26.1→…→1.21→1.20.5→1.20.3→1.20.2→1.20→1.19.4→1.19.3→1.19.1→1.19), each converting one version step. Registry id tables (blocks, items,
+   (26.3→26.2→26.1→…→1.21→1.20.5→1.20.3→1.20.2→1.20→1.19.4→1.19.3→1.19.1→1.19→1.18.2→1.18), each converting one version step. Registry id tables (blocks, items,
    entities, sounds, particles, data components, argument types) are generated from per-version
    registry mapping data; structural changes follow the vanilla protocol differences between steps.
 
@@ -186,7 +189,7 @@ session_server = "https://sessionserver.mojang.com"
 prevent_proxy_connections = false  # pass the client IP to Mojang
 
 [status]
-version_name = ""                  # server-list text; empty = the allowed range, e.g. "1.19-26.3"
+version_name = ""                  # server-list text; empty = the allowed range, e.g. "1.18-26.3"
 
 [versions]
 allow = ["*"]                      # default: every version the plugin can translate

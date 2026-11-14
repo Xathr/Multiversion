@@ -19,7 +19,7 @@ folder = sys.argv[1]
 # Newest step first: the pool follows the newest version's order, so its lists are single runs
 # and older versions' lists are that order with a few gaps.
 ORDER = ["26_2", "26_1", "1_21_11", "1_21_9", "1_21_7", "1_21_6", "1_21_5", "1_21_4", "1_21_2", "1_21",
-         "1_20_5", "1_20_3", "1_20_2", "1_20", "1_19_4", "1_19_3", "1_19_1"]
+         "1_20_5", "1_20_3", "1_20_2", "1_20", "1_19_4", "1_19_3", "1_19_1", "1_18_2"]
 LIST = re.compile(r'^pub static ([A-Z0-9_]+): \[&str; (\d+)\] = \[(.*)\];$', re.M)
 pool_path = os.path.join(folder, "data_names.rs")
 pool, index = [], {}

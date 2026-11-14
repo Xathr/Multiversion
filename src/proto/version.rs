@@ -32,6 +32,8 @@ pub const KNOWN: &[VersionInfo] = &[
     VersionInfo { protocol: 761, name: "1.19.3" },
     VersionInfo { protocol: 760, name: "1.19.1" },
     VersionInfo { protocol: 759, name: "1.19" },
+    VersionInfo { protocol: 758, name: "1.18.2" },
+    VersionInfo { protocol: 757, name: "1.18" },
 ];
 
 pub const BACKEND: Version = Version { protocol: 777 };

@@ -8,13 +8,13 @@ Copy each field into the Store Listing form at market.pumpkinmc.org.
 | Category | Utilities |
 | Pricing | Free |
 | Release channel | Beta |
-| Version | 0.4.3 |
+| Version | 0.5.0 |
 | Binary | `Multiversion.wasm` from the latest release of this repository (about 3.1 MB, under the 5 MB limit) |
 | Icon | `logo.png` (512×512) |
 | Screenshots | `screenshot-versions.png`, `screenshot-console.png`, `screenshot-config.png` (1600×900 each) |
 | Source link | https://github.com/Xathr/Multiversion |
 | Sources / credits | [ViaVersion](https://github.com/ViaVersion/ViaVersion), [ViaBackwards](https://github.com/ViaVersion/ViaBackwards), [ViaVersion Mappings](https://github.com/ViaVersion/Mappings) (GPL-3.0), [minecraft-data](https://github.com/PrismarineJS/minecraft-data) |
-| Keywords | multiversion, protocol, version, compatibility, 1.19, 1.19.2, 1.19.4, 1.20, 1.20.1, 1.20.2, 1.20.4, 1.20.6, 1.21, 26.3, cross-version, viaversion, backwards |
+| Keywords | multiversion, protocol, version, compatibility, 1.18, 1.18.2, 1.19, 1.19.2, 1.19.4, 1.20, 1.20.1, 1.20.2, 1.20.4, 1.20.6, 1.21, 26.3, cross-version, viaversion, backwards |
 | Description | contents of `description.md` |
 
 ## Commands
@@ -27,4 +27,4 @@ Copy each field into the Store Listing form at market.pumpkinmc.org.
 
 ## Short tagline
 
-Let Minecraft Java 1.19 through 26.3 join your Pumpkin server. No proxy, no Java, no extra port.
+Let Minecraft Java 1.18 through 26.3 join your Pumpkin server. No proxy, no Java, no extra port.

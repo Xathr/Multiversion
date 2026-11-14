@@ -54,19 +54,22 @@ pub fn encryption_request(protocol: i32, public_der: &[u8], verify_token: &[u8])
     w.into_inner()
 }
 
-/// Login success: profile (properties as name, value, signature), then the fields only some
-/// versions have: strict error handling (1.20.5-1.21.1) and the session id (26.2+).
+/// Login success: profile (properties as name, value, signature; 1.19+), then the fields only
+/// some versions have: strict error handling (1.20.5-1.21.1) and the session id (26.2+).
 pub fn login_finished(protocol: i32, uuid: u128, name: &str, props: &[(&str, &str, Option<&str>)], session_id: u128) -> Vec<u8> {
     let mut w = Writer::new();
     w.uuid(uuid);
     w.string(name);
-    w.varint(props.len() as i32);
-    for (n, v, s) in props {
-        w.string(n);
-        w.string(v);
-        w.option(*s, |w, s| {
-            w.string(s);
-        });
+    // 1.18.2 and older learn the profile's properties (the skin) from the player list instead
+    if protocol >= 759 {
+        w.varint(props.len() as i32);
+        for (n, v, s) in props {
+            w.string(n);
+            w.string(v);
+            w.option(*s, |w, s| {
+                w.string(s);
+            });
+        }
     }
     if protocol >= 776 {
         w.uuid(session_id);
@@ -104,6 +107,19 @@ mod tests {
         for protocol in [759, 760, 761, 762, 763] {
             assert_eq!(encryption_request(protocol, &[1], &[2]), encryption_request(765, &[1], &[2]));
             assert_eq!(login_finished(protocol, 7, "Steve", &props, 5), login_finished(765, 7, "Steve", &props, 5));
+        }
+        // 1.18.2 and older: the same encryption request, and a login success without properties.
+        for protocol in [757, 758] {
+            assert_eq!(encryption_request(protocol, &[1], &[2]), encryption_request(765, &[1], &[2]));
+            let mut expected = Writer::new();
+            expected.uuid(7).string("Steve");
+            assert_eq!(login_finished(protocol, 7, "Steve", &props, 5), expected.buf, "protocol {protocol}");
+            let mut start = Writer::new();
+            start.string("Steve");
+            assert_eq!(parse_login_start(protocol, &start.buf).unwrap(), LoginStart { name: "Steve", uuid: None });
+            let mut response = Writer::new();
+            response.byte_array(&[1; 4]).byte_array(&[2; 4]);
+            assert_eq!(parse_encryption_response(protocol, &response.buf).unwrap(), (&[1u8; 4][..], Some(&[2u8; 4][..])));
         }
         let mut with_session = Writer::new();
         with_session.uuid(7).string("Steve").varint(0).uuid(5);
