@@ -31,7 +31,8 @@
 - 🖥️ **Clear startup banner**: the supported versions, ports and login mode at a glance, and every console line tagged `[Multiversion]`
 - 🛡️ **Built-in protection**: oversized packets before login are refused, idle logins time out, one address can only hold a few connections that are still logging in and open a limited number per 10 seconds, and malformed data is refused before it can use up memory
 - 🔔 **Update check**: tells the console and operators when a newer version is on the Market, and `/multiversion update download` fetches the signed file after checking its signature
-- ⚡ **Light on the CPU and memory**: its own fast connection encryption (about 3.6 times quicker than before), server-list pings answered from a one-second cache, compression memory only for connections that need it, and Pumpkin's link to the plugin can skip compression
+- ⚡ **Light on the CPU and memory**: chunks are translated about four times faster than in 0.5.0, its own fast connection encryption (about 3.6 times quicker than before), server-list pings answered from a one-second cache, compression memory only for connections that need it, and Pumpkin's link to the plugin can skip compression
+- 📈 **Works with perfmon**: with the [perfmon](https://market.pumpkinmc.org/plugin/ID0WVaaw) plugin installed, `/perf plugins` shows this plugin's memory, CPU use and open connections, with nothing to set up
 - 🪶 **Self-contained**: one `.wasm` file (about 2.8 MB) and one config file
 
 ![Console](https://raw.githubusercontent.com/Xathr/Multiversion/main/market/screenshot-console.png)
