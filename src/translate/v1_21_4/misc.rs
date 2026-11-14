@@ -461,7 +461,7 @@ impl Misc {
         }
         text::copy_opt_component(&mut r, &mut w)?;
         if Items::copy_varint(&mut r, &mut w)? == 2 {
-            w.long_array(&r.long_array()?);
+            w.long_array_raw(r.long_array_raw()?);
         }
         Self::chat_type_and_names(&mut r, &mut w)?;
         Ok(w.into_inner())

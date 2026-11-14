@@ -68,7 +68,7 @@ fn section(r: &mut Reader, w: &mut Writer) -> Result<()> {
     if bits == 0 {
         w.u8(0);
         w.varint(Items::block_state(r.varint()?));
-        w.long_array(&r.long_array()?);
+        w.long_array_raw(r.long_array_raw()?);
     } else if bits <= 8 {
         w.u8(bits as u8);
         let n = r.varint()?;
@@ -79,7 +79,7 @@ fn section(r: &mut Reader, w: &mut Writer) -> Result<()> {
         for _ in 0..n {
             w.varint(Items::block_state(r.varint()?));
         }
-        w.long_array(&r.long_array()?);
+        w.long_array_raw(r.long_array_raw()?);
     } else {
         // direct palette: global ids, repacked in the client's width
         let values = unpack(&r.long_array()?, bits, BLOCKS_PER_SECTION);
@@ -100,7 +100,7 @@ fn section(r: &mut Reader, w: &mut Writer) -> Result<()> {
             w.varint(r.varint()?);
         }
     }
-    w.long_array(&r.long_array()?);
+    w.long_array_raw(r.long_array_raw()?);
     Ok(())
 }
 

@@ -73,7 +73,7 @@ impl World {
             let state = r.varint()?;
             w.u8(0);
             w.varint(items.block_state(state));
-            w.long_array(&r.long_array()?); // always empty, kept as sent
+            w.long_array_raw(r.long_array_raw()?); // always empty, kept as sent
             return Ok(());
         }
         if bits <= 8 {
@@ -87,7 +87,7 @@ impl World {
             for _ in 0..n {
                 w.varint(items.block_state(r.varint()?));
             }
-            w.long_array(&r.long_array()?);
+            w.long_array_raw(r.long_array_raw()?);
             return Ok(());
         }
         // Direct palette: global ids; remap and repack in the old width.
@@ -112,7 +112,7 @@ impl World {
                 w.varint(r.varint()?);
             }
         }
-        w.long_array(&r.long_array()?);
+        w.long_array_raw(r.long_array_raw()?);
         Ok(())
     }
 

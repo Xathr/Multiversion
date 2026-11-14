@@ -109,8 +109,8 @@ impl World {
             for _ in 0..n {
                 w.varint(items.block_state(r.varint()?));
             }
-            let longs = Self::read_longs(r, Self::packed_len(bits.max(4), BLOCKS_PER_SECTION))?;
-            Self::write_longs(w, &longs);
+            let longs = r.bytes(Self::packed_len(bits.max(4), BLOCKS_PER_SECTION) * 8)?;
+            w.raw(longs);
             return Ok(());
         }
         // Direct palette: global ids, repacked in the old width.
@@ -137,8 +137,8 @@ impl World {
                 w.varint(r.varint()?);
             }
         }
-        let longs = Self::read_longs(r, Self::packed_len(u32::from(bits), count))?;
-        Self::write_longs(w, &longs);
+        let longs = r.bytes(Self::packed_len(u32::from(bits), count) * 8)?;
+        w.raw(longs);
         Ok(())
     }
 
@@ -151,7 +151,7 @@ impl World {
         w.varint(n);
         for _ in 0..n.max(0) {
             w.varint(r.varint()?);
-            w.long_array(&r.long_array()?);
+            w.long_array_raw(r.long_array_raw()?);
         }
         let data = r.byte_array()?;
         let mut sr = Reader::new(data);

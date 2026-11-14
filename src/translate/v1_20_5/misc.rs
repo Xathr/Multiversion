@@ -440,7 +440,7 @@ impl Misc {
             copy_text(&mut r, &mut w)?; // unsigned content
         }
         if Items::copy_varint(&mut r, &mut w)? == 2 {
-            w.long_array(&r.long_array()?);
+            w.long_array_raw(r.long_array_raw()?);
         }
         chat_type(&mut r, &mut w)?;
         w.raw(r.remaining());

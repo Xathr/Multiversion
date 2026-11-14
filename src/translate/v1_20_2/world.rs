@@ -51,7 +51,7 @@ fn block_palette(r: &mut Reader, w: &mut Writer) -> Result<()> {
     if bits == 0 {
         w.u8(0);
         w.varint(items::block_state(r.varint()?));
-        w.long_array(&r.long_array()?);
+        w.long_array_raw(r.long_array_raw()?);
         return Ok(());
     }
     if bits <= 8 {
@@ -64,7 +64,7 @@ fn block_palette(r: &mut Reader, w: &mut Writer) -> Result<()> {
         for _ in 0..n {
             w.varint(items::block_state(r.varint()?));
         }
-        w.long_array(&r.long_array()?);
+        w.long_array_raw(r.long_array_raw()?);
         return Ok(());
     }
     // Direct palette: both versions use 15 bits, so only the values change.
@@ -87,7 +87,7 @@ fn copy_biomes(r: &mut Reader, w: &mut Writer) -> Result<()> {
             copy_varint(r, w)?;
         }
     }
-    w.long_array(&r.long_array()?);
+    w.long_array_raw(r.long_array_raw()?);
     Ok(())
 }
 

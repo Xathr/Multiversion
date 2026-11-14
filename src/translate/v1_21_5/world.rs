@@ -126,7 +126,7 @@ impl World {
         w.varint(n);
         for _ in 0..n.max(0) {
             w.varint(r.varint()?);
-            w.long_array(&r.long_array()?);
+            w.long_array_raw(r.long_array_raw()?);
         }
         let data = r.byte_array()?;
         let mut sr = Reader::new(data);

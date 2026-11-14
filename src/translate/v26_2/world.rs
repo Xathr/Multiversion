@@ -104,13 +104,13 @@ impl World {
             for _ in 0..n {
                 entries.push(items.block_state(r.varint()?));
             }
-            let longs = Self::read_longs(r, Self::packed_len(bits.max(4), BLOCKS_PER_SECTION))?;
+            let longs = r.bytes(Self::packed_len(bits.max(4), BLOCKS_PER_SECTION) * 8)?;
             w.u8(bits as u8);
             w.varint(n);
             for e in entries {
                 w.varint(e);
             }
-            Self::write_longs(w, &longs);
+            w.raw(longs);
             return Ok(());
         }
         // Direct palette: every value is a global state id in 26.3 width; repack in 26.2 width.
@@ -138,8 +138,8 @@ impl World {
                 w.varint(r.varint()?);
             }
         }
-        let longs = Self::read_longs(r, Self::packed_len(u32::from(bits), count))?;
-        Self::write_longs(w, &longs);
+        let longs = r.bytes(Self::packed_len(u32::from(bits), count) * 8)?;
+        w.raw(longs);
         Ok(())
     }
 
@@ -180,7 +180,7 @@ impl World {
         w.varint(n);
         for _ in 0..n.max(0) {
             w.varint(r.varint()?);
-            w.long_array(&r.long_array()?);
+            w.long_array_raw(r.long_array_raw()?);
         }
         // Sections
         let data = r.byte_array()?;

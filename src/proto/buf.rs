@@ -128,6 +128,15 @@ impl<'a> Reader<'a> {
         }
         (0..len).map(|_| self.i64()).collect()
     }
+    /// A long array left as its bytes, for copying it on unchanged: the number of longs and
+    /// their big-endian bytes. Checked the same way as [`Reader::long_array`].
+    pub fn long_array_raw(&mut self) -> Result<RawLongs<'a>> {
+        let len = self.varint()?;
+        if len < 0 || len as usize > self.len() / 8 {
+            return Err(DecodeError::Other("array longer than the packet".into()));
+        }
+        Ok(RawLongs { count: len, bytes: self.bytes(len as usize * 8)? })
+    }
     /// VarInt-prefixed list.
     pub fn list<T>(&mut self, mut f: impl FnMut(&mut Self) -> Result<T>) -> Result<Vec<T>> {
         let len = self.varint()?;
@@ -148,6 +157,13 @@ impl<'a> Reader<'a> {
         out.raw(&self.buf[start..self.pos]);
         Ok(())
     }
+}
+
+/// A long array as it sits in a packet (see [`Reader::long_array_raw`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawLongs<'a> {
+    count: i32,
+    bytes: &'a [u8],
 }
 
 #[derive(Default, Clone)]
@@ -236,6 +252,12 @@ impl Writer {
             self.i64(*x);
         }
         self
+    }
+    /// Writes a long array read with [`Reader::long_array_raw`]: the same bytes as reading
+    /// every long and writing it back, without doing so.
+    pub fn long_array_raw(&mut self, v: RawLongs) -> &mut Self {
+        self.varint(v.count);
+        self.raw(v.bytes)
     }
     pub fn option<T>(&mut self, v: Option<T>, f: impl FnOnce(&mut Self, T)) -> &mut Self {
         match v {
@@ -333,6 +355,35 @@ pub fn md5(input: &[u8]) -> [u8; 16] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Copying a long array as raw bytes gives the bytes that reading and rewriting it would,
+    /// and refuses the same broken arrays.
+    #[test]
+    fn raw_long_arrays_copy_like_decoded_ones() {
+        for longs in [vec![], vec![0], vec![1, -1, i64::MAX, i64::MIN, 0x0102_0304_0506_0708], (0..300).map(|i| i * 0x0123_4567_89ab).collect::<Vec<i64>>()] {
+            let mut packet = Writer::new();
+            packet.long_array(&longs).u8(0x7e);
+            let mut decoded = Reader::new(&packet.buf);
+            let mut by_value = Writer::new();
+            by_value.long_array(&decoded.long_array().unwrap());
+            let mut raw = Reader::new(&packet.buf);
+            let mut by_bytes = Writer::new();
+            by_bytes.long_array_raw(raw.long_array_raw().unwrap());
+            assert_eq!(by_bytes.buf, by_value.buf);
+            assert_eq!(by_bytes.buf, packet.buf[..packet.buf.len() - 1]);
+            // both readers stop at the same place
+            assert_eq!((raw.u8().unwrap(), decoded.u8().unwrap()), (0x7e, 0x7e));
+        }
+        // a length the packet can't hold, a negative one, and a cut-off array
+        let mut long = Writer::new();
+        long.varint(3).i64(1).i64(2);
+        let mut negative = Writer::new();
+        negative.varint(-1).i64(1);
+        for broken in [&long.buf[..], &negative.buf[..], &[2, 0, 0, 0][..], &[][..]] {
+            assert!(Reader::new(broken).long_array_raw().is_err());
+            assert!(Reader::new(broken).long_array().is_err());
+        }
+    }
     #[test]
     fn varint_roundtrip() {
         for v in [0, 1, 127, 128, 255, 25565, -1, i32::MAX, i32::MIN] {

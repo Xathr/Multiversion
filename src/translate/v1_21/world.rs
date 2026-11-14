@@ -66,7 +66,7 @@ impl World {
         if bits == 0 {
             w.u8(0);
             w.varint(items.block_state(r.varint()?));
-            w.long_array(&r.long_array()?);
+            w.long_array_raw(r.long_array_raw()?);
             return Ok(());
         }
         if bits <= 8 {
@@ -79,7 +79,7 @@ impl World {
             for _ in 0..n {
                 w.varint(items.block_state(r.varint()?));
             }
-            w.long_array(&r.long_array()?);
+            w.long_array_raw(r.long_array_raw()?);
             return Ok(());
         }
         // direct palette: global ids, repacked in the client's width
@@ -103,7 +103,7 @@ impl World {
                 w.varint(r.varint()?);
             }
         }
-        w.long_array(&r.long_array()?);
+        w.long_array_raw(r.long_array_raw()?);
         Ok(())
     }
 

@@ -145,8 +145,10 @@ impl World {
                 }
                 entries.push(items.block_state(state));
             }
-            let longs = Self::read_longs(r, Self::packed_len(bits.max(4), BLOCKS_PER_SECTION))?;
+            // copied on as it is; only a section with beds in it has to be looked through
+            let packed = r.bytes(Self::packed_len(bits.max(4), BLOCKS_PER_SECTION) * 8)?;
             if !bed_entries.is_empty() {
+                let longs: Vec<i64> = packed.chunks_exact(8).map(|c| i64::from_be_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]])).collect();
                 for (idx, v) in unpack(&longs, bits.max(4), BLOCKS_PER_SECTION).iter().enumerate() {
                     if bed_entries.contains(v) {
                         beds.push(idx);
@@ -158,7 +160,7 @@ impl World {
             for e in entries {
                 w.varint(e);
             }
-            Self::write_longs(w, &longs);
+            w.raw(packed);
             return Ok(());
         }
         // Direct palette: every value is a global state id; repack in the old width.
@@ -191,15 +193,15 @@ impl World {
                 w.varint(r.varint()?);
             }
         }
-        let longs = Self::read_longs(r, Self::packed_len(u32::from(bits), count))?;
-        Self::write_longs(w, &longs);
+        let longs = r.bytes(Self::packed_len(u32::from(bits), count) * 8)?;
+        w.raw(longs);
         Ok(())
     }
 
     /// Light data (long-array bit sets + byte arrays): identical in both versions.
     fn light_data(r: &mut Reader, w: &mut Writer) -> Result<()> {
         for _ in 0..4 {
-            w.long_array(&r.long_array()?);
+            w.long_array_raw(r.long_array_raw()?);
         }
         for _ in 0..2 {
             let n = r.varint()?;
@@ -221,7 +223,7 @@ impl World {
         w.varint(n);
         for _ in 0..n.max(0) {
             w.varint(r.varint()?);
-            w.long_array(&r.long_array()?);
+            w.long_array_raw(r.long_array_raw()?);
         }
         // Sections
         let data = r.byte_array()?;

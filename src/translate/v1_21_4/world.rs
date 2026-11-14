@@ -85,8 +85,9 @@ impl World {
             for _ in 0..n {
                 w.varint(items.block_state(r.varint()?));
             }
-            let longs = read_longs(r, packed_len(bits.max(4), BLOCKS_PER_SECTION))?;
-            w.long_array(&longs);
+            let count = packed_len(bits.max(4), BLOCKS_PER_SECTION);
+            let longs = r.bytes(count * 8)?;
+            w.varint(count as i32).raw(longs);
             return Ok(());
         }
         // Direct palette: global state ids, remapped and repacked at the old width.
@@ -114,8 +115,9 @@ impl World {
                 w.varint(r.varint()?);
             }
         }
-        let longs = read_longs(r, packed_len(u32::from(bits), BIOMES_PER_SECTION))?;
-        w.long_array(&longs);
+        let count = packed_len(u32::from(bits), BIOMES_PER_SECTION);
+        let longs = r.bytes(count * 8)?;
+        w.varint(count as i32).raw(longs);
         Ok(())
     }
 

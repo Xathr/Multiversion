@@ -37,6 +37,7 @@ fn replay() {
         let mut total = Duration::ZERO;
         let mut by_id: HashMap<i32, (Duration, u32)> = HashMap::new();
         let mut errors = 0;
+        let mut digest: u64 = 0xcbf2_9ce4_8422_2325;
         for _ in 0..rounds {
             let mut chain = Chain::for_client(Version { protocol: info.protocol }).unwrap();
             if chain.emulates_configuration() {
@@ -46,6 +47,12 @@ fn replay() {
                 let started = Instant::now();
                 let result = chain.clientbound(*state, pkt.clone());
                 let took = started.elapsed();
+                // every byte that would reach the client, so two builds can be compared
+                for out in result.iter().flatten() {
+                    for byte in out.id.to_be_bytes().iter().chain(out.payload.iter()) {
+                        digest = (digest ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3);
+                    }
+                }
                 chain.take_replies();
                 errors += u32::from(result.is_err());
                 total += took;
@@ -56,9 +63,11 @@ fn replay() {
                 }
             }
         }
+        // MULTIVERSION_PACKET=46 also reports that one packet id (26.3 numbering), e.g. chunks
+        let watched = std::env::var("MULTIVERSION_PACKET").ok().and_then(|v| v.parse::<i32>().ok()).and_then(|id| by_id.get(&id).map(|(t, n)| format!("  packet {id}: {:.2} ms for {}", t.as_secs_f64() * 1000.0 / f64::from(rounds), n / rounds))).unwrap_or_default();
         let mut top: Vec<_> = by_id.into_iter().collect();
         top.sort_by_key(|(_, (t, _))| std::cmp::Reverse(*t));
         let top: Vec<String> = top.iter().take(4).map(|(id, (t, n))| format!("{id}:{:.1}ms/{}", t.as_secs_f64() * 1000.0 / f64::from(rounds), n / rounds)).collect();
-        println!("{:>8}  {:7.1} ms per stream  errors {}  top {}", info.name, total.as_secs_f64() * 1000.0 / f64::from(rounds), errors / rounds, top.join("  "));
+        println!("{:>8}  {:7.1} ms per stream  errors {}  output {digest:016x}  top {}{watched}", info.name, total.as_secs_f64() * 1000.0 / f64::from(rounds), errors / rounds, top.join("  "));
     }
 }

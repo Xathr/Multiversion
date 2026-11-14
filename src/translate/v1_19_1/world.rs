@@ -64,7 +64,7 @@ fn block_palette(r: &mut Reader, w: &mut Writer) -> Result<()> {
     if bits == 0 {
         w.u8(0);
         w.varint(block_state(r.varint()?));
-        w.long_array(&r.long_array()?);
+        w.long_array_raw(r.long_array_raw()?);
         return Ok(());
     }
     if bits <= 8 {
@@ -74,7 +74,7 @@ fn block_palette(r: &mut Reader, w: &mut Writer) -> Result<()> {
         for _ in 0..n.max(0) {
             w.varint(block_state(r.varint()?));
         }
-        w.long_array(&r.long_array()?);
+        w.long_array_raw(r.long_array_raw()?);
         return Ok(());
     }
     if bits > 32 {
@@ -101,7 +101,7 @@ fn biome_palette(r: &mut Reader, w: &mut Writer) -> Result<()> {
             w.varint(r.varint()?);
         }
     }
-    w.long_array(&r.long_array()?);
+    w.long_array_raw(r.long_array_raw()?);
     Ok(())
 }
 
