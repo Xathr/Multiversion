@@ -32,6 +32,7 @@
 - 🛡️ **Built-in protection**: oversized packets before login are refused, idle logins time out, one address can only hold a few connections that are still logging in and open a limited number per 10 seconds, and malformed data is refused before it can use up memory
 - 🔔 **Update check**: tells the console and operators when a newer version is on the Market, and `/multiversion update download` fetches the signed file after checking its signature
 - ⚡ **Light on the CPU and memory**: chunks are translated about four times faster than in 0.5.0, its own fast connection encryption (about 3.6 times quicker than before), server-list pings answered from a one-second cache, compression memory only for connections that need it, and Pumpkin's link to the plugin can skip compression
+- 🔀 **Works behind Velocity and Vine**: put the plugin on each Pumpkin server of a network and paste the proxy's secret once. The plugin works out which proxy it is and sets itself up
 - 🌍 **13 languages, and yours**: every message, in game and in the console, comes from a language file (English, German, Spanish, French, Italian, Japanese, Korean, Dutch, Polish, Portuguese, Russian, Turkish, Chinese). Add a language by dropping a file in the `lang` folder, with no code or config change
 - 📈 **Works with perfmon**: with the [perfmon](https://market.pumpkinmc.org/plugin/ID0WVaaw) plugin installed, `/perf plugins` shows this plugin's memory, CPU use and open connections, with nothing to set up
 - 🪶 **Self-contained**: one `.wasm` file (about 2.8 MB) and one config file

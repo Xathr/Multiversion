@@ -13,6 +13,7 @@ pub mod banner;
 pub mod color;
 pub mod config;
 pub mod crypto;
+pub mod forward;
 pub mod i18n;
 pub mod net;
 pub mod platform;
@@ -242,6 +243,11 @@ mod plugin {
                 listen: &config.listen.address,
                 backend: &config.backend.address,
                 online_mode: config.auth.online_mode,
+                proxy: config.proxy.plan().filter(|p| p.required).map(|p| match (p.velocity, p.vine) {
+                    (true, true) => "Velocity / Vine",
+                    (_, true) => "Vine",
+                    _ => "Velocity",
+                }),
             };
             for line in crate::banner::lines(&info) {
                 crate::log::info(&line);

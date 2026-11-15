@@ -75,5 +75,17 @@
   "update.console.fetch_hint": "서명된 파일을 받으려면 /multiversion update download를 실행하세요",
   "update.console.download_failed": "업데이트 다운로드 실패: {error}",
   "update.console.nothing": "다운로드할 새 버전이 없습니다",
-  "version.protocol": "프로토콜 {number}"
+  "version.protocol": "프로토콜 {number}",
+  "kick.proxy_only": "이 서버에 직접 접속하지 말고 네트워크 주소로 접속해 주세요.",
+  "console.proxy": "프록시",
+  "console.proxy_refused": "{proxy}이(가) {player}을(를) 전달했지만 이 서버가 받아들이지 않았습니다: {reason}",
+  "proxy.bad_signature": "config.toml의 [proxy]에 있는 것과 다른 시크릿 또는 키로 서명되었습니다",
+  "proxy.bad_data": "데이터가 이 플러그인이 읽을 수 있는 형식이 아닙니다",
+  "proxy.bad_challenge": "다른 로그인에 대한 응답입니다",
+  "proxy.bad_key": "config.toml의 vine_public_key가 올바른 키가 아닙니다",
+  "console.proxy_detected": "{proxy} 프록시를 감지했습니다: config.toml의 [proxy] mode가 이제 \"{mode}\"입니다. 이제부터 플레이어는 프록시를 통해서만 접속합니다.",
+  "console.proxy_detected_unsaved": "{proxy} 프록시를 감지했습니다. config.toml에서 [proxy] mode = \"{mode}\"로 설정하세요.",
+  "console.proxy_needs_velocity_secret": "Velocity 프록시가 이 서버로 플레이어를 전달하고 있지만 plugins/data/multiversion/config.toml의 [proxy] 아래 velocity_secret이 비어 있습니다. Velocity의 forwarding.secret 파일 내용을 넣고 다시 시작하세요.",
+  "console.proxy_needs_vine_secret": "프록시가 이 서버로 플레이어를 전달하고 있지만 plugins/data/multiversion/config.toml의 [proxy]에 해당 시크릿이 없습니다. Vine이면 vine_secret을 Vine 설정에서 이 서버에 지정한 시크릿으로 설정하고, Velocity이면 velocity_secret을 설정하세요. 그런 다음 다시 시작하세요.",
+  "banner.proxy_detail": "(플레이어는 프록시를 통해 접속)"
 }

@@ -39,6 +39,8 @@ struct ProxyHandler {
     auths: HashMap<u32, (Token, PendingAuth)>,
     /// Pumpkin's last server-list reply and when it arrived (ms).
     status_cache: Option<(u64, String)>,
+    /// When the console was last told a proxy needs its secret in the config.
+    proxy_hint_ms: u64,
     /// The update check or download in progress, and the id the reactor reports it under.
     update: Option<(u32, crate::updater::Flow)>,
     /// The check of Pumpkin's settings that runs once after start.
@@ -109,6 +111,27 @@ impl ProxyHandler {
                     }
                 }
                 Action::Log(msg) => log::info(&msg),
+                Action::ProxySeen(kind) => {
+                    // The first player a proxy passes on settles what "auto" meant: from now on
+                    // this server is behind that proxy, and the config says so.
+                    if self.config.proxy.mode.trim().eq_ignore_ascii_case("auto") {
+                        self.config.proxy.mode = kind.name().to_string();
+                        let saved = crate::config::save_proxy_mode(kind.name());
+                        log::info(&crate::color::good(&crate::i18n::console(if saved { "console.proxy_detected" } else { "console.proxy_detected_unsaved" }, &[("proxy", kind.title()), ("mode", kind.name())])));
+                    }
+                }
+                Action::ProxyUnconfigured(kind) => {
+                    // once a minute at most: every player the proxy sends would say the same
+                    let now = now_millis();
+                    if now.saturating_sub(self.proxy_hint_ms) >= 60_000 || self.proxy_hint_ms == 0 {
+                        self.proxy_hint_ms = now;
+                        let key = match kind {
+                            crate::forward::Kind::Velocity => "console.proxy_needs_velocity_secret",
+                            crate::forward::Kind::Vine => "console.proxy_needs_vine_secret",
+                        };
+                        log::warn(&crate::color::warn(&crate::i18n::console(key, &[])));
+                    }
+                }
             }
         }
     }
@@ -228,7 +251,10 @@ impl Handler for ProxyHandler {
                     reactor.close_now(token);
                     return;
                 }
-                if !self.rate.allow(peer.ip(), now_millis(), self.config.limits.max_connections_per_ip_per_10s) {
+                // Behind a proxy every player comes from the proxy's address, so the limits per
+                // address would count them all as one; the proxy has its own.
+                let per_address = !self.config.proxy.required();
+                if per_address && !self.rate.allow(peer.ip(), now_millis(), self.config.limits.max_connections_per_ip_per_10s) {
                     if self.config.logging.debug {
                         log::info(&format!("{} {peer} refused: limits.max_connections_per_ip_per_10s ({}) reached", crate::color::dim("debug:"), self.config.limits.max_connections_per_ip_per_10s));
                     }
@@ -236,7 +262,7 @@ impl Handler for ProxyHandler {
                     return;
                 }
                 let logging_in = self.conns.values().filter(|c| c.peer.ip() == peer.ip() && c.is_logging_in()).count();
-                if !self.config.limits.allows_login_from(logging_in) {
+                if per_address && !self.config.limits.allows_login_from(logging_in) {
                     if self.config.logging.debug {
                         log::info(&format!("{} {peer} refused: limits.max_logins_per_ip ({}) reached", crate::color::dim("debug:"), self.config.limits.max_logins_per_ip));
                     }
@@ -411,6 +437,7 @@ pub fn start(config: Config) -> Result<bool, String> {
         backend_of: HashMap::new(),
         auths: HashMap::new(),
         status_cache: None,
+        proxy_hint_ms: 0,
         rate: crate::ratelimit::ConnectionRate::default(),
         update: None,
         setup: crate::setup_check::Check::default(),

@@ -8,6 +8,7 @@ use crate::color;
 use crate::config;
 use crate::config::Config;
 use crate::crypto::{self, ServerKeys};
+use crate::forward::{self, Kind};
 use crate::net::reactor::Token;
 use crate::platform::now_millis;
 use crate::proto::buf::{offline_uuid, uuid_to_string, Reader, Writer};
@@ -49,6 +50,8 @@ pub enum Phase {
     StatusBackendHandshake,
     StatusBackendWait,
     LoginStart,
+    /// Asked whether a proxy is passing this player on; waiting for its answers.
+    LoginProxyInfo,
     /// Encryption request sent, waiting for the key response.
     LoginAwaitKey,
     /// hasJoined in flight.
@@ -72,6 +75,10 @@ pub enum Action {
     ConnectBackend,
     /// Start a session check; the proxy registers the pollable.
     StartAuth { username: String, server_hash: String, ip: Option<String> },
+    /// A proxy passed a player on and its signature was right.
+    ProxySeen(crate::forward::Kind),
+    /// A proxy passed a player on, but the config has no secret or key to check it with.
+    ProxyUnconfigured(crate::forward::Kind),
     /// Pumpkin's server-list reply, to reuse for pings in the next moment.
     CacheStatus(String),
     /// Close this connection's link to Pumpkin (after flushing), keeping the client.
@@ -96,6 +103,10 @@ pub struct Connection {
     pub client_uuid: u128,
     pub profile: Option<Profile>,
     verify_token: Vec<u8>,
+    /// The questions put to a proxy that may be in front, until they are all answered.
+    proxy_wait: Option<ProxyWait>,
+    /// The player's own address, when a proxy passed them on (`peer` is then the proxy).
+    pub forwarded_ip: Option<String>,
     pub chain: Option<Chain>,
     /// For clients on Pumpkin's own version: corrects the few packets Pumpkin sends that a
     /// client rejects (see `translate::v26_2::items::Repair`).
@@ -107,6 +118,17 @@ pub struct Connection {
     held_clientbound: Vec<Vec<u8>>,
     status_ping_payload: Option<i64>,
     pending_status_request: bool,
+}
+
+/// Login plugin requests sent to whatever connected, and the answers so far. A proxy answers
+/// its own with the player's identity; a game client answers each with "not understood".
+struct ProxyWait {
+    required: bool,
+    velocity_id: Option<i32>,
+    vine_id: Option<i32>,
+    challenge: [u8; 16],
+    velocity: Option<Vec<u8>>,
+    vine: Option<Vec<u8>>,
 }
 
 pub struct Shared<'a> {
@@ -135,6 +157,8 @@ impl Connection {
             client_uuid: 0,
             profile: None,
             verify_token: Vec::new(),
+            proxy_wait: None,
+            forwarded_ip: None,
             chain: None,
             native_repair: None,
             state: State::Configuration,
@@ -181,7 +205,7 @@ impl Connection {
         let mut w = Writer::new();
         w.string(json);
         let pkt = Packet::new(ids::LOGIN_C_DISCONNECT, w.into_inner());
-        if matches!(self.phase, Phase::LoginStart | Phase::LoginAwaitKey | Phase::LoginAuth | Phase::BackendConnecting | Phase::BackendLogin) {
+        if matches!(self.phase, Phase::LoginStart | Phase::LoginProxyInfo | Phase::LoginAwaitKey | Phase::LoginAuth | Phase::BackendConnecting | Phase::BackendLogin) {
             self.client_pkt(&pkt, out);
         }
         self.phase = Phase::Closed;
@@ -219,6 +243,7 @@ impl Connection {
             Phase::Handshake => self.handle_handshake(id, &payload, shared, out),
             Phase::Status | Phase::StatusBackendHandshake | Phase::StatusBackendWait => self.handle_status(id, &payload, shared, out),
             Phase::LoginStart => self.handle_login_start(id, &payload, shared, out),
+            Phase::LoginProxyInfo => self.handle_proxy_answer(id, &payload, shared, out),
             Phase::LoginAwaitKey => self.handle_login_key(id, &payload, shared, out),
             Phase::LoginAuth | Phase::BackendConnecting | Phase::BackendLogin => {
                 // Clients send nothing here (cookie responses aside); ignore.
@@ -239,7 +264,7 @@ impl Connection {
     /// did for it): both sides enter configuration. Tell the backend, release held packets.
     fn enter_configuration(&mut self, shared: &Shared, out: &mut Vec<Action>) {
         if config::get().logging.joins {
-            let auth = crate::i18n::console(if shared.config.auth.online_mode { "console.online" } else { "console.offline" }, &[]);
+            let auth = crate::i18n::console(if self.forwarded_ip.is_some() { "console.proxy" } else if shared.config.auth.online_mode { "console.online" } else { "console.offline" }, &[]);
             let how = match &self.chain {
                 Some(c) if !c.is_passthrough() => crate::i18n::console("console.join_translated", &[("server", &crate::proto::version::BACKEND.name()), ("auth", &auth)]),
                 _ => crate::i18n::console("console.join_native", &[("auth", &auth)]),
@@ -402,6 +427,32 @@ impl Connection {
         let uuid = start.uuid.unwrap_or_else(|| offline_uuid(&name));
         self.username = name.clone();
         self.client_uuid = uuid;
+        if let Some(plan) = shared.config.proxy.plan() {
+            // Ask before anything else: a proxy has already logged the player in and expects
+            // this question, a game client just says it does not know it.
+            let mut wait = ProxyWait { required: plan.required, velocity_id: None, vine_id: None, challenge: [0; 16], velocity: None, vine: None };
+            wait.challenge.copy_from_slice(&crypto::random_bytes(16));
+            if plan.velocity {
+                wait.velocity_id = Some(1);
+                let pkt = Packet::new(ids::LOGIN_C_CUSTOM_QUERY, forward::request(1, forward::VELOCITY_CHANNEL, &forward::velocity_request()));
+                self.client_pkt(&pkt, out);
+            }
+            if plan.vine {
+                wait.vine_id = Some(2);
+                let pkt = Packet::new(ids::LOGIN_C_CUSTOM_QUERY, forward::request(2, forward::VINE_CHANNEL, &forward::vine_request(&wait.challenge)));
+                self.client_pkt(&pkt, out);
+            }
+            debug_log(out, || format!("{} login start as {name}; asking whether a proxy passed them on", self.peer));
+            self.proxy_wait = Some(wait);
+            self.phase = Phase::LoginProxyInfo;
+            return Ok(());
+        }
+        self.direct_login(shared, out)
+    }
+
+    /// The player connected to this server themselves: log them in here.
+    fn direct_login(&mut self, shared: &Shared, out: &mut Vec<Action>) -> Result<(), String> {
+        let name = self.username.clone();
         let online = shared.config.auth.online_mode;
         debug_log(out, || format!("{} login start as {name} ({} mode)", self.peer, if online { "online" } else { "offline" }));
         if shared.config.auth.online_mode {
@@ -415,6 +466,64 @@ impl Connection {
             self.after_auth(shared, out);
             Ok(())
         }
+    }
+
+    /// An answer to one of the questions in `proxy_wait`. Once all are in: a proxy's identity is
+    /// checked and used, and a game client either logs in here or is sent to the proxy.
+    fn handle_proxy_answer(&mut self, id: i32, payload: &[u8], shared: &Shared, out: &mut Vec<Action>) -> Result<(), String> {
+        if id != ids::LOGIN_S_CUSTOM_QUERY_ANSWER {
+            return Err("expected a login plugin answer".into());
+        }
+        let (message, data) = forward::parse_answer(payload).ok_or("bad login plugin answer")?;
+        let Some(wait) = self.proxy_wait.as_mut() else { return Ok(()) };
+        if wait.velocity_id == Some(message) {
+            wait.velocity_id = None;
+            wait.velocity = data.map(<[u8]>::to_vec);
+        } else if wait.vine_id == Some(message) {
+            wait.vine_id = None;
+            wait.vine = data.map(<[u8]>::to_vec);
+        } else {
+            return Err("unexpected login plugin answer".into());
+        }
+        if wait.velocity_id.is_some() || wait.vine_id.is_some() {
+            return Ok(());
+        }
+        let Some(wait) = self.proxy_wait.take() else { return Ok(()) };
+        let proxy = &shared.config.proxy;
+        let checked = if let Some(data) = wait.vine.as_deref().filter(|_| proxy.has_vine()) {
+            Some((Kind::Vine, forward::vine_key(&proxy.vine_public_key, &proxy.vine_secret).and_then(|key| forward::read_vine(data, &key, &wait.challenge))))
+        } else if let Some(data) = wait.velocity.as_deref().filter(|_| proxy.has_velocity()) {
+            Some((Kind::Velocity, forward::read_velocity(data, proxy.velocity_secret.trim())))
+        } else {
+            None
+        };
+        match checked {
+            Some((kind, Ok(player))) => {
+                debug_log(out, || format!("{} passed on by {} as {} from {}", self.peer, kind.title(), player.name, player.ip));
+                self.username = player.name.clone();
+                self.client_uuid = player.id;
+                self.forwarded_ip = Some(player.ip);
+                self.profile = Some(Profile {
+                    id: player.id,
+                    name: player.name,
+                    properties: player.properties.into_iter().map(|(name, value, signature)| crate::auth::Property { name, value, signature }).collect(),
+                });
+                out.push(Action::ProxySeen(kind));
+                self.after_auth(shared, out);
+            }
+            Some((kind, Err(why))) => {
+                let reason = crate::i18n::console(why.key(), &[]);
+                err_log(out, color::bad(&crate::i18n::console("console.proxy_refused", &[("proxy", kind.title()), ("player", &self.username), ("reason", &reason)])));
+                self.kick_key("kick.misconfigured", &[], out);
+            }
+            None if wait.vine.is_some() || wait.velocity.is_some() => {
+                out.push(Action::ProxyUnconfigured(if wait.vine.is_some() && wait.velocity.is_none() { Kind::Vine } else if wait.velocity.is_some() && wait.vine.is_none() { Kind::Velocity } else { Kind::Vine }));
+                self.kick_key("kick.misconfigured", &[], out);
+            }
+            None if wait.required => self.kick_key("kick.proxy_only", &[], out),
+            None => return self.direct_login(shared, out),
+        }
+        Ok(())
     }
 
     fn handle_login_key(&mut self, id: i32, payload: &[u8], shared: &Shared, out: &mut Vec<Action>) -> Result<(), String> {
@@ -676,7 +785,8 @@ impl Connection {
     /// Velocity modern forwarding v1 payload, signed with the shared secret (what Pumpkin checks).
     fn velocity_answer(&self, message_id: i32, shared: &Shared) -> Packet {
         let profile = self.profile.as_ref().expect("profile");
-        velocity_answer(message_id, &self.peer.ip().to_string(), profile, &shared.config.backend.forwarding_secret)
+        let ip = self.forwarded_ip.clone().unwrap_or_else(|| self.peer.ip().to_string());
+        velocity_answer(message_id, &ip, profile, &shared.config.backend.forwarding_secret)
     }
 }
 
@@ -795,7 +905,8 @@ impl Connection {
             format!(
                 "{} {} ({}) {}",
                 color::name(&self.username),
-                color::dim(&format!("[{}]", self.peer)),
+                // behind a proxy, the player's own address rather than the proxy's
+                color::dim(&format!("[{}]", self.forwarded_ip.clone().unwrap_or_else(|| self.peer.to_string()))),
                 color::version(&self.client_version.name()),
                 color::dim(&format!("uuid {}", uuid_to_string(self.client_uuid)))
             )

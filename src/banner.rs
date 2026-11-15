@@ -18,6 +18,8 @@ pub struct Info<'a> {
     pub listen: &'a str,
     pub backend: &'a str,
     pub online_mode: bool,
+    /// The proxy players must come through ("Velocity"), if the server is behind one.
+    pub proxy: Option<&'a str>,
 }
 
 /// The lowest and highest version in a range like "1.21-26.3" or "1.21, 1.21.4-26.3", or `None`
@@ -57,7 +59,9 @@ pub fn lines(info: &Info) -> Vec<String> {
         .collect();
 
     let tr = |key: &str| crate::i18n::console(key, &[]);
-    let login = if info.online_mode {
+    let login = if let Some(proxy) = info.proxy {
+        format!("{} {}", color::good(proxy), color::dim(&tr("banner.proxy_detail")))
+    } else if info.online_mode {
         format!("{} {}", color::good(&tr("console.online")), color::dim(&tr("banner.online_detail")))
     } else {
         format!("{} {}", color::warn(&tr("console.offline")), color::dim(&tr("banner.offline_detail")))
@@ -85,7 +89,7 @@ mod tests {
     use super::*;
 
     fn info() -> Info<'static> {
-        Info { version: "1.2.3", range: "1.21-26.3", listen: "0.0.0.0:25565", backend: "127.0.0.1:25566", online_mode: true }
+        Info { version: "1.2.3", range: "1.21-26.3", listen: "0.0.0.0:25565", backend: "127.0.0.1:25566", online_mode: true, proxy: None }
     }
 
     fn strip(s: &str) -> String {

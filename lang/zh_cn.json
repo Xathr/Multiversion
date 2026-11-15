@@ -75,5 +75,17 @@
   "update.console.fetch_hint": "运行 /multiversion update download 获取已签名的文件",
   "update.console.download_failed": "更新下载失败：{error}",
   "update.console.nothing": "没有可下载的新版本",
-  "version.protocol": "协议 {number}"
+  "version.protocol": "协议 {number}",
+  "kick.proxy_only": "请通过网络的地址加入，而不是直接连接此服务器。",
+  "console.proxy": "代理",
+  "console.proxy_refused": "{proxy} 转发了 {player}，但此服务器没有接受：{reason}",
+  "proxy.bad_signature": "签名所用的密钥与 config.toml 中 [proxy] 的不同",
+  "proxy.bad_data": "数据不是此插件能读取的格式",
+  "proxy.bad_challenge": "它回应的是另一次登录",
+  "proxy.bad_key": "config.toml 中的 vine_public_key 不是有效的密钥",
+  "console.proxy_detected": "检测到 {proxy} 代理：config.toml 中的 [proxy] mode 现在是 \"{mode}\"。从现在起玩家只能通过代理加入。",
+  "console.proxy_detected_unsaved": "检测到 {proxy} 代理。请在 config.toml 中设置 [proxy] mode = \"{mode}\"。",
+  "console.proxy_needs_velocity_secret": "有 Velocity 代理正在向此服务器转发玩家，但 plugins/data/multiversion/config.toml 中 [proxy] 下的 velocity_secret 为空。请把 Velocity 的 forwarding.secret 文件内容填入并重启。",
+  "console.proxy_needs_vine_secret": "有代理正在向此服务器转发玩家，但 plugins/data/multiversion/config.toml 中的 [proxy] 没有它的密钥。对于 Vine，请把 vine_secret 设为此服务器在 Vine 配置中的 secret；对于 Velocity，请设置 velocity_secret。然后重启。",
+  "banner.proxy_detail": "（玩家通过代理加入）"
 }

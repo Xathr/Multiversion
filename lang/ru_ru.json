@@ -75,5 +75,17 @@
   "update.console.fetch_hint": "выполните /multiversion update download, чтобы получить подписанный файл",
   "update.console.download_failed": "не удалось загрузить обновление: {error}",
   "update.console.nothing": "более новой версии для загрузки нет",
-  "version.protocol": "протокол {number}"
+  "version.protocol": "протокол {number}",
+  "kick.proxy_only": "Заходите через адрес сети, а не напрямую на этот сервер.",
+  "console.proxy": "прокси",
+  "console.proxy_refused": "{proxy} передал игрока {player}, но этот сервер его не принял: {reason}",
+  "proxy.bad_signature": "подпись сделана другим секретом или ключом, чем указан в [proxy] в config.toml",
+  "proxy.bad_data": "данные не в том виде, который умеет читать этот плагин",
+  "proxy.bad_challenge": "это ответ на другой вход",
+  "proxy.bad_key": "vine_public_key в config.toml не является корректным ключом",
+  "console.proxy_detected": "Обнаружен прокси {proxy}: [proxy] mode в config.toml теперь \"{mode}\". Отныне игроки заходят только через прокси.",
+  "console.proxy_detected_unsaved": "Обнаружен прокси {proxy}. Укажите [proxy] mode = \"{mode}\" в config.toml.",
+  "console.proxy_needs_velocity_secret": "Прокси Velocity передаёт игроков на этот сервер, но velocity_secret в [proxy] в plugins/data/multiversion/config.toml пуст. Впишите туда содержимое файла forwarding.secret из Velocity и перезапустите сервер.",
+  "console.proxy_needs_vine_secret": "Прокси передаёт игроков на этот сервер, но в [proxy] в plugins/data/multiversion/config.toml нет секрета для него. Для Vine укажите в vine_secret секрет этого сервера из конфигурации Vine; для Velocity укажите velocity_secret. Затем перезапустите сервер.",
+  "banner.proxy_detail": "(игроки заходят через прокси)"
 }

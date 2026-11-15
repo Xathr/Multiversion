@@ -75,5 +75,17 @@
   "update.console.fetch_hint": "führe /multiversion update download aus, um die signierte Datei zu holen",
   "update.console.download_failed": "Update-Download fehlgeschlagen: {error}",
   "update.console.nothing": "es gibt keine neuere Version zum Herunterladen",
-  "version.protocol": "Protokoll {number}"
+  "version.protocol": "Protokoll {number}",
+  "kick.proxy_only": "Bitte tritt über die Adresse des Netzwerks bei, nicht direkt über diesen Server.",
+  "console.proxy": "Proxy",
+  "console.proxy_refused": "{proxy} hat {player} weitergeleitet, aber dieser Server hat es nicht akzeptiert: {reason}",
+  "proxy.bad_signature": "es ist mit einem anderen Secret oder Schlüssel signiert, als [proxy] in config.toml enthält",
+  "proxy.bad_data": "die Daten haben keine Form, die dieses Plugin lesen kann",
+  "proxy.bad_challenge": "es antwortet auf eine andere Anmeldung",
+  "proxy.bad_key": "vine_public_key in config.toml ist kein gültiger Schlüssel",
+  "console.proxy_detected": "{proxy}-Proxy erkannt: [proxy] mode in config.toml ist jetzt \"{mode}\". Ab jetzt treten Spieler nur noch über den Proxy bei.",
+  "console.proxy_detected_unsaved": "{proxy}-Proxy erkannt. Setze [proxy] mode = \"{mode}\" in config.toml.",
+  "console.proxy_needs_velocity_secret": "Ein Velocity-Proxy leitet Spieler an diesen Server weiter, aber velocity_secret unter [proxy] in plugins/data/multiversion/config.toml ist leer. Trage dort den Inhalt von Velocitys Datei forwarding.secret ein und starte neu.",
+  "console.proxy_needs_vine_secret": "Ein Proxy leitet Spieler an diesen Server weiter, aber [proxy] in plugins/data/multiversion/config.toml enthält kein Secret dafür. Für Vine setze vine_secret auf das Secret, das dieser Server in Vines Konfiguration hat; für Velocity setze velocity_secret. Starte dann neu.",
+  "banner.proxy_detail": "(Spieler treten über den Proxy bei)"
 }

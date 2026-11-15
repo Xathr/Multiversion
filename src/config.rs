@@ -17,6 +17,7 @@ pub struct Config {
     pub listen: Listen,
     pub backend: Backend,
     pub auth: Auth,
+    pub proxy: Proxy,
     pub status: Status,
     pub versions: Versions,
     pub limits: Limits,
@@ -54,6 +55,43 @@ pub struct Auth {
     pub session_server: String,
     /// Reject players that connect through a proxy Mojang reports for their IP.
     pub prevent_proxy_connections: bool,
+}
+
+/// A proxy (Velocity or Vine) in front of this server. Behind one, the proxy logs players in and
+/// passes on who they are; the plugin only translates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Proxy {
+    /// "auto", "none", "velocity" or "vine". "auto" works out which proxy is in front from the
+    /// first player it passes on and writes it here.
+    pub mode: String,
+    /// Velocity's forwarding secret (the contents of its forwarding.secret file).
+    pub velocity_secret: String,
+    /// The secret this server has in Vine's config ([servers.<name>] secret)...
+    pub vine_secret: String,
+    /// ...or Vine's public key (64 hex characters), if you would rather not copy the secret.
+    pub vine_public_key: String,
+}
+impl Default for Proxy {
+    fn default() -> Self {
+        Self { mode: "auto".into(), velocity_secret: String::new(), vine_secret: String::new(), vine_public_key: String::new() }
+    }
+}
+impl Proxy {
+    pub fn has_velocity(&self) -> bool {
+        !self.velocity_secret.trim().is_empty()
+    }
+    pub fn has_vine(&self) -> bool {
+        !self.vine_secret.trim().is_empty() || !self.vine_public_key.trim().is_empty()
+    }
+    /// Who a new login is asked about (see `forward::plan`).
+    pub fn plan(&self) -> Option<crate::forward::Plan> {
+        crate::forward::plan(&self.mode, self.has_velocity(), self.has_vine())
+    }
+    /// Players can only come through a proxy.
+    pub fn required(&self) -> bool {
+        self.plan().is_some_and(|p| p.required)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +134,7 @@ impl Default for Config {
             listen: Listen::default(),
             backend: Backend::default(),
             auth: Auth::default(),
+            proxy: Proxy::default(),
             status: Status::default(),
             versions: Versions::default(),
             limits: Limits::default(),
@@ -190,6 +229,38 @@ pub fn set_active(config: Config) {
     let _ = ACTIVE.set(config);
 }
 
+/// Where the config was loaded from, for the one setting the plugin changes itself.
+static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// `text` with `[proxy] mode` set to `mode`, or `None` if the file has no such line.
+pub fn with_proxy_mode(text: &str, mode: &str) -> Option<String> {
+    let mut section = "";
+    let mut done = false;
+    let mut out = String::with_capacity(text.len() + 8);
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(name) = trimmed.strip_prefix('[').and_then(|rest| rest.split(']').next()) {
+            section = name.trim();
+        }
+        if !done && section == "proxy" && trimmed.split('=').next().is_some_and(|k| k.trim() == "mode") && trimmed.contains('=') {
+            let indent = &line[..line.len() - line.trim_start().len()];
+            let comment = trimmed.split_once('#').map(|(_, c)| format!("  #{c}")).unwrap_or_default();
+            out.push_str(&format!("{indent}mode = \"{mode}\"{comment}"));
+            done = true;
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    done.then_some(out)
+}
+
+/// Writes `[proxy] mode` to config.toml, leaving the rest of the file as it is.
+pub fn save_proxy_mode(mode: &str) -> bool {
+    let Some(path) = PATH.get() else { return false };
+    std::fs::read_to_string(path).ok().and_then(|text| with_proxy_mode(&text, mode)).is_some_and(|text| std::fs::write(path, text).is_ok())
+}
+
 /// The loaded config (defaults before load, e.g. in tests).
 pub fn get() -> &'static Config {
     static DEFAULT: std::sync::OnceLock<Config> = std::sync::OnceLock::new();
@@ -215,6 +286,7 @@ pub const FILE_HEADER: &str = "# multiversion: lets other Minecraft versions joi
 
 impl Config {
     pub fn load_or_create(path: &str) -> Result<Self, String> {
+        let _ = PATH.set(path.to_string());
         match std::fs::read_to_string(path) {
             Ok(text) => {
                 let original_len = text.len();
@@ -648,6 +720,20 @@ mod snippet_tests {
         assert!(parsed.backend.pumpkin_compression);
         let old: Config = toml::from_str("[backend]\naddress = \"127.0.0.1:1\"\n").unwrap();
         assert!(!old.backend.pumpkin_compression, "configs without the setting turn Pumpkin's compression off");
+    }
+
+    /// Only the mode line under [proxy] changes when a proxy is detected.
+    #[test]
+    fn the_detected_proxy_is_written_to_the_mode_line() {
+        let text = "mode = \"x\"\n\n[auth]\nonline_mode = true\n\n[proxy]\nmode = \"auto\"  # set by the plugin\nvelocity_secret = \"abc\"\n";
+        assert_eq!(with_proxy_mode(text, "velocity").unwrap(), "mode = \"x\"\n\n[auth]\nonline_mode = true\n\n[proxy]\nmode = \"velocity\"  # set by the plugin\nvelocity_secret = \"abc\"\n");
+        assert_eq!(with_proxy_mode("[auth]\nonline_mode = true\n", "vine"), None);
+        // a new config has the section, on auto, and asks nothing of players until a secret is set
+        let cfg = Config::default();
+        assert_eq!(cfg.proxy.mode, "auto");
+        assert!(!cfg.proxy.required());
+        let fresh = toml::to_string_pretty(&cfg).unwrap();
+        assert_eq!(with_proxy_mode(&fresh, "vine").map(|t| t.contains("[proxy]\nmode = \"vine\"\n")), Some(true));
     }
 
     #[test]
