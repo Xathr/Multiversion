@@ -40,9 +40,19 @@
 
 ## Setup
 
-1. Put `Multiversion.wasm` in your server's `plugins/` folder and start the server.
-2. The console lists the four lines to change in `pumpkin.toml`, each with the heading it sits under. The same list is saved as `plugins/data/multiversion/pumpkin-settings.txt`.
-3. Stop the server, change those lines in `pumpkin.toml`, and start it again. The console prints `setup check passed`, or lists only the lines that are still wrong.
+1. Put `Multiversion.wasm` in your server's `plugins/` folder.
+2. With the server stopped, change four lines in `pumpkin.toml`. Each is already in the file, under the heading in `[brackets]`:
+
+```
+[networking.java]             address = "127.0.0.1:25566"
+[networking.proxy]            enabled = true
+[networking.proxy.velocity]   enabled = true
+[networking.proxy.velocity]   secret = "multiversion"
+```
+
+3. Start the server. The console prints `setup check passed`, or lists only the lines that are still wrong.
+
+That secret is the same for everyone, which is fine while Pumpkin listens on `127.0.0.1` and nobody else can run programs on the machine. For a private one, start the server once without editing: the plugin generates a secret and lists the same four lines with it, also saved as `plugins/data/multiversion/pumpkin-settings.txt`.
 
 It is the same on Linux and Windows. Players keep connecting to port 25565 as before; keep port 25566 closed in your firewall. Plugins can only write their own folder, which is why the `pumpkin.toml` edit is yours to make.
 

@@ -31,6 +31,8 @@ pub struct Check {
     pub attempts: u32,
     pub next_try_ms: u64,
     pub done: bool,
+    /// The plugin's own secret was refused and the quick setup's is being tried.
+    pub quick: bool,
     inbound: Inbound,
     outbound: Outbound,
     forwarded: bool,
@@ -38,7 +40,7 @@ pub struct Check {
 
 impl Default for Check {
     fn default() -> Self {
-        Self { token: None, attempts: 0, next_try_ms: 0, done: false, inbound: Inbound::default(), outbound: Outbound::default(), forwarded: false }
+        Self { token: None, attempts: 0, next_try_ms: 0, done: false, quick: false, inbound: Inbound::default(), outbound: Outbound::default(), forwarded: false }
     }
 }
 

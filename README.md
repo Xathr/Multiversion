@@ -74,32 +74,44 @@ player (26.2) ──► plugin listener :25565 ──► translator chain ──
 
 Requirements: a Pumpkin 26.3 server (Pumpkin 0.2.2, commit `eda6944`, plugin API v0.1). Nothing else: no Java, no proxy, no extra process.
 
+### Quick setup (one start)
+
 1. Copy `Multiversion.wasm` into your server's `plugins/` folder. The [Pumpkin Market](https://market.pumpkinmc.org/plugin/s7e5Nz2f) signs its copy, so Pumpkin loads it as verified; an unsigned build is on the [latest GitHub release](https://github.com/Xathr/Multiversion/releases/latest), or build it with `build.sh`.
-2. Start the server and answer `y` when Pumpkin asks to approve the plugin's permissions. The
-   plugin prints the lines to change in `pumpkin.toml`, for example:
+2. With the server stopped, open `pumpkin.toml` (in the server folder) in a text editor and
+   change these four lines. Each is already in the file, under the heading shown in `[brackets]`:
 
    ```
-   [Multiversion] SETUP NEEDED (one time): stop the server, open pumpkin.toml and change these 4 lines:
-   [Multiversion]     [networking.java]             address = "127.0.0.1:25566"
-   [Multiversion]     [networking.proxy]            enabled = true
-   [Multiversion]     [networking.proxy.velocity]   enabled = true
-   [Multiversion]     [networking.proxy.velocity]   secret = "..."
+   [networking.java]             address = "127.0.0.1:25566"
+   [networking.proxy]            enabled = true
+   [networking.proxy.velocity]   enabled = true
+   [networking.proxy.velocity]   secret = "multiversion"
    ```
 
-   The same list, with your own secret filled in, is saved as
-   `plugins/data/multiversion/pumpkin-settings.txt`.
-3. Stop the server, open `pumpkin.toml` (in the server folder) in a text editor and change those
-   lines. Each one is already in the file, under the heading shown in `[brackets]`. Save it.
-4. Start the server. The plugin checks Pumpkin's settings and prints
-   `setup check passed`, or lists only the lines that are still wrong.
+3. Start the server and answer `y` when Pumpkin asks to approve the plugin's permissions. The
+   console prints `setup check passed`, or lists only the lines that are still wrong.
 
 That is the whole setup, and it is the same on Linux and Windows. Players keep connecting to port
 25565; keep 25566 closed in the firewall.
 
+The quick setup's secret is the same for everyone who uses it. That is fine as long as Pumpkin
+listens on `127.0.0.1` (the first line above) and nobody else can run programs on the machine:
+only something on the same machine can reach Pumpkin's port. The plugin will not use the quick
+secret if Pumpkin's address is not a local one. On a shared machine, use a private secret.
+
+### With a private secret (two starts)
+
+1. Copy `Multiversion.wasm` into `plugins/` and start the server once. The plugin makes a random
+   secret and prints the four lines for `pumpkin.toml` with it filled in. The same list is saved
+   as `plugins/data/multiversion/pumpkin-settings.txt`.
+2. Stop the server, change those lines in `pumpkin.toml`, and start it again.
+
+If you already use the quick setup, you can switch at any time: put the `secret` line from
+`pumpkin-settings.txt` into `pumpkin.toml` and restart.
+
 Why the edit is yours to make: Pumpkin lets a plugin write only inside its own data folder, so the
 plugin cannot change `pumpkin.toml` itself. The first line moves Pumpkin to a local port so the
 plugin can take over 25565; the other three make Pumpkin accept the signed player identity the
-plugin forwards.
+plugin forwards. Pumpkin refuses an empty secret, so there has to be one.
 
 Two optional settings are listed in `pumpkin-settings.txt`: turning off Pumpkin's compression on
 its local link to the plugin (saves CPU), and pre-approving the plugin's permissions so Pumpkin

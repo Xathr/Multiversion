@@ -688,7 +688,7 @@ impl Connection {
     /// Velocity modern forwarding v1 payload, signed with the shared secret (what Pumpkin checks).
     fn velocity_answer(&self, message_id: i32, shared: &Shared) -> Packet {
         let profile = self.profile.as_ref().expect("profile");
-        velocity_answer(message_id, &self.peer.ip().to_string(), profile, &shared.config.backend.forwarding_secret)
+        velocity_answer(message_id, &self.peer.ip().to_string(), profile, config::secret(shared.config))
     }
 }
 
