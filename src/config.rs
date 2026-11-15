@@ -404,32 +404,6 @@ pub enum Need {
     Secret,
 }
 
-/// The secret of the quick setup: the same for everyone, so the pumpkin.toml lines can be copied
-/// from the README before the server is first started. Anyone who can reach Pumpkin's own port
-/// could use it to join under any name, which is why Pumpkin has to listen on 127.0.0.1 only
-/// (the plugin refuses the quick secret otherwise) and why a private secret is the better
-/// choice on a machine other people can run programs on.
-pub const QUICK_SECRET: &str = "multiversion";
-
-static USING_QUICK_SECRET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Pumpkin turned out to be set up with the quick secret: forward players with that one.
-pub fn use_quick_secret() {
-    USING_QUICK_SECRET.store(true, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// The secret the plugin signs forwarded players with: its own, or the quick one if that is
-/// what Pumpkin accepts.
-pub fn secret(cfg: &Config) -> &str {
-    if USING_QUICK_SECRET.load(std::sync::atomic::Ordering::Relaxed) { QUICK_SECRET } else { &cfg.backend.forwarding_secret }
-}
-
-/// After Pumpkin refused the plugin's own secret: whether to try the quick one. Only for a
-/// Pumpkin that listens on this machine alone, and only once.
-pub fn try_quick_secret(needs: &[Need], tried: bool, backend_is_loopback: bool, own_secret: &str) -> bool {
-    needs == [Need::Secret] && !tried && backend_is_loopback && own_secret != QUICK_SECRET
-}
-
 pub const ALL_NEEDS: [Need; 4] = [Need::Address, Need::ProxyEnabled, Need::VelocityEnabled, Need::Secret];
 
 /// The lines to change in pumpkin.toml for `needs`: the heading each is found under, then the
@@ -456,9 +430,6 @@ pub fn setup_message(cfg: &Config, needs: &[Need]) -> Vec<String> {
     let mut out = vec![format!("SETUP NEEDED (one time): stop the server, open pumpkin.toml and change {count}:")];
     out.extend(setup_lines(cfg, needs).into_iter().map(|l| format!("    {l}")));
     out.push("Each is already in the file, under the heading in [brackets]. Save, then start the server.".to_string());
-    if needs.contains(&Need::Secret) {
-        out.push(format!("(The quick setup's secret = \"{QUICK_SECRET}\" works too, if only you can run programs on this machine.)"));
-    }
     out.push("The same list is in plugins/data/multiversion/pumpkin-settings.txt.".to_string());
     out
 }
@@ -490,10 +461,6 @@ pub fn pumpkin_snippet(cfg: &Config) -> String {
          {lines}\
          \n\
          3. Save the file and start the server.\n\
-         \n\
-         The secret above is private to this server. The quick setup in the README uses\n\
-         secret = \"{QUICK_SECRET}\" instead, which also works: it is the same for everyone, so use it\n\
-         only when nobody else can run programs on this machine.\n\
          \n\
          Players keep connecting to port {public_port}. Keep port {backend_port} closed in your firewall.\n\
          Every time the server starts, the plugin checks these settings and says in the console\n\
@@ -616,27 +583,6 @@ mod version_selector_tests {
 #[cfg(test)]
 mod snippet_tests {
     use super::*;
-
-    /// The quick setup's secret is tried once, after the plugin's own was refused, and only when
-    /// Pumpkin listens on this machine alone.
-    #[test]
-    fn the_quick_secret_is_a_fallback_for_a_local_pumpkin() {
-        assert!(try_quick_secret(&[Need::Secret], false, true, "a-private-secret"));
-        assert!(!try_quick_secret(&[Need::Secret], true, true, "a-private-secret"), "already tried");
-        assert!(!try_quick_secret(&[Need::Secret], false, false, "a-private-secret"), "Pumpkin is reachable from other machines");
-        assert!(!try_quick_secret(&[Need::Secret], false, true, QUICK_SECRET), "it was the quick secret that was refused");
-        assert!(!try_quick_secret(&[Need::ProxyEnabled, Need::VelocityEnabled, Need::Secret], false, true, "x"), "forwarding is off altogether");
-        assert!(!try_quick_secret(&[Need::Address], false, true, "x"));
-        let mut cfg = Config::default();
-        cfg.backend.forwarding_secret = "mine".into();
-        assert_eq!(secret(&cfg), "mine");
-        // both ways of setting up are spelled out for the admin
-        let wrong = setup_message(&cfg, &[Need::Secret]).join("\n");
-        assert!(wrong.contains("secret = \"mine\"") && wrong.contains("secret = \"multiversion\""), "{wrong}");
-        assert!(!setup_message(&cfg, &[Need::Address]).join("\n").contains("quick"));
-        let file = pumpkin_snippet(&cfg);
-        assert!(file.contains("secret = \"mine\"") && file.contains("secret = \"multiversion\""), "{file}");
-    }
 
     /// A message left as config.toml came is translated; one the admin reworded is theirs.
     #[test]

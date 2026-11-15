@@ -121,20 +121,11 @@ impl ProxyHandler {
         }
         self.setup.done = true;
         match verdict {
-            Verdict::Ready => {
-                log::info(&format!(
-                    "{} {}",
-                    crate::color::good("setup check passed:"),
-                    crate::color::dim(&format!("Pumpkin is on {} and accepts the players this plugin forwards", self.backend_addr))
-                ));
-                if self.setup.quick {
-                    crate::config::use_quick_secret();
-                    log::info(&crate::color::dim(&format!(
-                        "Pumpkin uses the quick setup's secret. That is fine while only you can run programs on this machine and port {} stays closed to the outside; for a secret of your own, see plugins/data/multiversion/pumpkin-settings.txt.",
-                        self.backend_addr.port()
-                    )));
-                }
-            }
+            Verdict::Ready => log::info(&format!(
+                "{} {}",
+                crate::color::good("setup check passed:"),
+                crate::color::dim(&format!("Pumpkin is on {} and accepts the players this plugin forwards", self.backend_addr))
+            )),
             Verdict::Needs(needs) => {
                 for line in crate::config::setup_message(&self.config, &needs) {
                     log::warn(&line);
@@ -168,19 +159,10 @@ impl ProxyHandler {
                 Err(_) => self.retry_setup_check(reactor),
             },
             Event::Data { token, data } if *token == own => {
-                let secret = if self.setup.quick { crate::config::QUICK_SECRET } else { self.config.backend.forwarding_secret.as_str() };
-                let (reply, verdict) = self.setup.on_data(data, secret);
+                let (reply, verdict) = self.setup.on_data(data, &self.config.backend.forwarding_secret);
                 reactor.send(own, &reply);
-                match verdict {
-                    // Pumpkin refused the plugin's own secret: it may be set up with the quick one.
-                    Some(crate::setup_check::Verdict::Needs(needs)) if crate::config::try_quick_secret(&needs, self.setup.quick, self.backend_addr.ip().is_loopback(), &self.config.backend.forwarding_secret) => {
-                        reactor.close_now(own);
-                        self.setup.reset_connection();
-                        self.setup.quick = true;
-                        self.setup.next_try_ms = now_millis();
-                    }
-                    Some(verdict) => self.finish_setup_check(reactor, verdict),
-                    None => {}
+                if let Some(verdict) = verdict {
+                    self.finish_setup_check(reactor, verdict);
                 }
             }
             Event::Closed { token, .. } if *token == own => self.retry_setup_check(reactor),
