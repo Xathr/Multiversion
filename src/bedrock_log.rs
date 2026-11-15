@@ -35,7 +35,7 @@ fn describe(player: &Player) -> Option<String> {
     let s = bedrock.get_settings();
     // The name and version come from the player's client: strip anything that could act on the console.
     let version = color::clean(&s.game_version, 24);
-    let version = if version.is_empty() { "unknown version".to_string() } else { version };
+    let version = if version.is_empty() { crate::i18n::console("console.unknown_version", &[]) } else { version };
     Some(format!(
         "{} {} ({}{}) {}",
         color::name(&color::clean(&player.get_name(), 48)),
@@ -60,7 +60,7 @@ impl EventHandler<PlayerJoinEvent> for JoinLog {
             return e;
         }
         if let Some(who) = describe(&e.player) {
-            crate::log::info(&format!("{who} {} {}", color::good("joined"), color::dim("(native Bedrock connection)")));
+            crate::log::info(&format!("{who} {} {}", color::good(&crate::i18n::console("console.joined", &[])), color::dim(&crate::i18n::console("console.bedrock_native", &[]))));
         }
         e
     }
@@ -73,7 +73,7 @@ impl EventHandler<PlayerLeaveEvent> for LeaveLog {
             return e;
         }
         if let Some(who) = describe(&e.player) {
-            crate::log::info(&format!("{who} {}", color::warn("disconnected")));
+            crate::log::info(&format!("{who} {}", color::warn(&crate::i18n::console("console.bedrock_disconnected", &[]))));
         }
         e
     }

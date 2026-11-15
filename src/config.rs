@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     /// Colour the plugin's console messages (ANSI codes, like Pumpkin's own output).
     pub console_colors: bool,
+    /// The language of the console and of messages sent before a player's own language is
+    /// known: a locale with a file in the `lang` folder ("de_de"), or "auto" for English with
+    /// the game's own words (in each player's language) where the game has them.
+    pub language: String,
     pub listen: Listen,
     pub backend: Backend,
     pub auth: Auth,
@@ -17,7 +21,6 @@ pub struct Config {
     pub versions: Versions,
     pub limits: Limits,
     pub updates: Updates,
-    pub messages: Messages,
     pub logging: Logging,
 }
 
@@ -68,7 +71,6 @@ pub struct Versions {
     pub allow: Vec<String>,
     /// Versions refused even if `allow` would admit them. Same syntax as `allow`.
     pub deny: Vec<String>,
-    pub kick_unsupported_message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,7 +101,7 @@ impl Default for Config {
             limits: Limits::default(),
             updates: Updates::default(),
             console_colors: true,
-            messages: Messages::default(),
+            language: "auto".into(),
             logging: Logging::default(),
         }
     }
@@ -149,73 +151,12 @@ impl Default for Versions {
         Self {
             allow: vec!["*".into()],
             deny: Vec::new(),
-            kick_unsupported_message: "This server supports Minecraft {versions}. You are on {client}.".into(),
         }
     }
 }
 impl Default for Limits {
     fn default() -> Self {
         Self { compression_threshold: 256, max_connections: 200, login_timeout_secs: 30, max_logins_per_ip: 5, max_connections_per_ip_per_10s: 40 }
-    }
-}
-
-impl Messages {
-    /// The admin's own wording for the message with this language key, if they changed it in
-    /// config.toml. Their wording wins over the language files.
-    pub fn custom(&self, key: &str) -> Option<&str> {
-        let default = Self::default();
-        let (mine, original) = match key {
-            "kick.server_starting" => (&self.server_starting, default.server_starting),
-            "kick.auth_servers_down" => (&self.auth_servers_down, default.auth_servers_down),
-            "kick.invalid_session" => (&self.invalid_session, default.invalid_session),
-            "kick.username_mismatch" => (&self.username_mismatch, default.username_mismatch),
-            "kick.internal_error" => (&self.internal_error, default.internal_error),
-            "kick.misconfigured" => (&self.misconfigured, default.misconfigured),
-            "kick.protocol_error" => (&self.protocol_error, default.protocol_error),
-            _ => return None,
-        };
-        (*mine != original).then_some(mine.as_str())
-    }
-}
-
-/// Messages players see when they are disconnected. The text here is English and is what the
-/// `lang` files start from: leave a line as it is to use the language files, change it to use
-/// your own wording in every language.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Messages {
-    /// The language of these messages: a locale that has a file in the `lang` folder ("de_de"),
-    /// or "auto" for English, with the game's own words (in each player's language) for the
-    /// messages the game has.
-    pub language: String,
-    /// Pumpkin isn't accepting connections yet (starting up or stopped).
-    pub server_starting: String,
-    /// Mojang's session servers couldn't be reached.
-    pub auth_servers_down: String,
-    /// Mojang said the player's session isn't valid.
-    pub invalid_session: String,
-    /// The name Mojang returned doesn't match the one the client sent.
-    pub username_mismatch: String,
-    /// Something went wrong in the plugin. Details are in the console.
-    pub internal_error: String,
-    /// pumpkin.toml isn't set up for the plugin. Details are in the console.
-    pub misconfigured: String,
-    /// The client sent something the plugin couldn't read. {error} is the detail.
-    pub protocol_error: String,
-}
-
-impl Default for Messages {
-    fn default() -> Self {
-        Self {
-            language: "auto".into(),
-            server_starting: "The server is starting up. Please try again in a moment.".into(),
-            auth_servers_down: "Authentication servers are down. Please try again later, sorry!".into(),
-            invalid_session: "Invalid session (Try restarting your game and the launcher)".into(),
-            username_mismatch: "Username mismatch".into(),
-            internal_error: "Internal proxy error".into(),
-            misconfigured: "Server misconfigured: see the server console.".into(),
-            protocol_error: "Protocol error: {error}".into(),
-        }
     }
 }
 
@@ -276,11 +217,26 @@ impl Config {
     pub fn load_or_create(path: &str) -> Result<Self, String> {
         match std::fs::read_to_string(path) {
             Ok(text) => {
-                let cfg: Self = toml::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+                let original_len = text.len();
+                let mut cfg: Self = toml::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+                // the language used to be chosen under [messages]; keep that choice
+                if let Ok(have) = toml::from_str::<toml::Value>(&text)
+                    && have.get("language").is_none()
+                    && let Some(old) = have.get("messages").and_then(|m| m.get("language")).and_then(|l| l.as_str())
+                {
+                    cfg.language = old.to_string();
+                }
+                // Messages used to be settings here; they live in the language files now. Take
+                // them out of the file, keeping any the admin had reworded for the lang folder.
+                let (text, reworded) = take_old_messages(&text);
+                if !reworded.is_empty() {
+                    *MOVED_MESSAGES.lock().unwrap_or_else(|e| e.into_inner()) = reworded;
+                }
                 // A file from an older version, or one written by hand, may not list every
                 // setting. Add the ones it lacks so they can all be seen and changed.
-                if let Some(filled) = fill_missing(&text, &cfg) {
-                    let _ = std::fs::write(path, filled);
+                let filled = fill_missing(&text, &cfg);
+                if filled.is_some() || text.len() != original_len {
+                    let _ = std::fs::write(path, filled.unwrap_or(text));
                 }
                 Ok(cfg)
             }
@@ -294,6 +250,74 @@ impl Config {
             Err(e) => Err(format!("{path}: {e}")),
         }
     }
+}
+
+/// Messages an older config.toml had reworded, as (language key, text), waiting to be written
+/// to the language folder (see [`take_moved_messages`]).
+static MOVED_MESSAGES: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// The reworded messages found in an older config.toml, once.
+pub fn take_moved_messages() -> Vec<(String, String)> {
+    std::mem::take(&mut *MOVED_MESSAGES.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+/// What the message settings were called before they moved to the language files, the language
+/// key each became, and the English text each had.
+const OLD_MESSAGES: [(&str, &str, &str, &str); 8] = [
+    ("messages", "server_starting", "kick.server_starting", "The server is starting up. Please try again in a moment."),
+    ("messages", "auth_servers_down", "kick.auth_servers_down", "Authentication servers are down. Please try again later, sorry!"),
+    ("messages", "invalid_session", "kick.invalid_session", "Invalid session (Try restarting your game and the launcher)"),
+    ("messages", "username_mismatch", "kick.username_mismatch", "Username mismatch"),
+    ("messages", "internal_error", "kick.internal_error", "Internal proxy error"),
+    ("messages", "misconfigured", "kick.misconfigured", "Server misconfigured: see the server console."),
+    ("messages", "protocol_error", "kick.protocol_error", "Protocol error: {error}"),
+    ("versions", "kick_unsupported_message", "kick.unsupported_version", "This server supports Minecraft {versions}. You are on {client}."),
+];
+
+/// Takes the old message settings out of a config.toml: the whole `[messages]` section and
+/// `kick_unsupported_message`. Returns the file without them and the messages whose text the
+/// admin had changed, as (language key, text). A file without them comes back as it was.
+pub fn take_old_messages(text: &str) -> (String, Vec<(String, String)>) {
+    let Ok(have) = toml::from_str::<toml::Value>(text) else { return (text.to_string(), Vec::new()) };
+    let reworded: Vec<(String, String)> = OLD_MESSAGES
+        .iter()
+        .filter_map(|(section, name, key, english)| {
+            let value = have.get(section)?.get(name)?.as_str()?;
+            (value != *english).then(|| (key.to_string(), value.to_string()))
+        })
+        .collect();
+    let mut out: Vec<&str> = Vec::new();
+    let mut section = String::new();
+    let mut changed = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(name) = trimmed.strip_prefix('[').and_then(|rest| rest.split(']').next()) {
+            section = name.trim().to_string();
+        }
+        let name = trimmed.split('=').next().unwrap_or("").trim();
+        let old = section == "messages" && (trimmed.starts_with('[') || OLD_MESSAGES.iter().any(|(s, n, _, _)| *s == "messages" && *n == name) || name == "language")
+            || section == "versions" && name == "kick_unsupported_message";
+        if old {
+            changed = true;
+        } else {
+            out.push(line);
+        }
+    }
+    if !changed {
+        return (text.to_string(), Vec::new());
+    }
+    // no blank line left doubled where the section was
+    let mut joined = String::with_capacity(text.len());
+    let mut blank = false;
+    for line in out {
+        if line.trim().is_empty() && blank {
+            continue;
+        }
+        blank = line.trim().is_empty();
+        joined.push_str(line);
+        joined.push('\n');
+    }
+    (joined, reworded)
 }
 
 /// One setting as a fresh config file writes it: its section ("" for none), its name, and its
@@ -426,11 +450,10 @@ pub fn setup_lines(cfg: &Config, needs: &[Need]) -> Vec<String> {
 
 /// What the console says when setup is not finished: the lines still to change, and where.
 pub fn setup_message(cfg: &Config, needs: &[Need]) -> Vec<String> {
-    let count = if needs.len() == 1 { "this line".to_string() } else { format!("these {} lines", needs.len()) };
-    let mut out = vec![format!("SETUP NEEDED (one time): stop the server, open pumpkin.toml and change {count}:")];
+    let mut out = vec![if needs.len() == 1 { crate::i18n::console("console.setup_needed_one", &[]) } else { crate::i18n::console("console.setup_needed_many", &[("count", &needs.len().to_string())]) }];
     out.extend(setup_lines(cfg, needs).into_iter().map(|l| format!("    {l}")));
-    out.push("Each is already in the file, under the heading in [brackets]. Save, then start the server.".to_string());
-    out.push("The same list is in plugins/data/multiversion/pumpkin-settings.txt.".to_string());
+    out.push(crate::i18n::console("console.setup_each", &[]));
+    out.push(crate::i18n::console("console.setup_file", &[]));
     out
 }
 
@@ -584,32 +607,26 @@ mod version_selector_tests {
 mod snippet_tests {
     use super::*;
 
-    /// A message left as config.toml came is translated; one the admin reworded is theirs.
+    /// A config.toml from before the language files loses its message settings; the ones the
+    /// admin had reworded are handed on, the rest are simply dropped.
     #[test]
-    fn reworded_messages_win_over_the_language_files() {
-        let mut m = Messages::default();
-        assert_eq!(m.language, "auto");
-        for key in ["kick.server_starting", "kick.auth_servers_down", "kick.invalid_session", "kick.username_mismatch", "kick.internal_error", "kick.misconfigured", "kick.protocol_error"] {
-            assert_eq!(m.custom(key), None, "{key}");
-            // the built-in English is the same text as the config default
-            assert_eq!(crate::i18n::Catalog::bundled().get("en_us", key), match key {
-                "kick.server_starting" => &m.server_starting,
-                "kick.auth_servers_down" => &m.auth_servers_down,
-                "kick.invalid_session" => &m.invalid_session,
-                "kick.username_mismatch" => &m.username_mismatch,
-                "kick.internal_error" => &m.internal_error,
-                "kick.misconfigured" => &m.misconfigured,
-                _ => &m.protocol_error,
-            });
+    fn old_message_settings_move_out_of_the_config() {
+        let old = "console_colors = true\n\n[versions]\nallow = [\"*\"]\nkick_unsupported_message = \"Use {versions}, not {client}!\"\n\n[messages]                         # what players see\nserver_starting = \"The server is starting up. Please try again in a moment.\"\ninvalid_session = \"Log in again\"\nprotocol_error = \"Protocol error: {error}\"\n\n[logging]\njoins = true\n";
+        let (new, reworded) = take_old_messages(old);
+        assert_eq!(new, "console_colors = true\n\n[versions]\nallow = [\"*\"]\n\n[logging]\njoins = true\n");
+        assert_eq!(reworded, [("kick.invalid_session".to_string(), "Log in again".to_string()), ("kick.unsupported_version".to_string(), "Use {versions}, not {client}!".to_string())]);
+        // the result still loads, and a file without the old settings is left alone
+        let cfg: Config = toml::from_str(&new).unwrap();
+        assert_eq!(cfg.language, "auto");
+        assert_eq!(take_old_messages(&new), (new.clone(), Vec::new()));
+        assert_eq!(take_old_messages("not = [toml"), ("not = [toml".to_string(), Vec::new()));
+        // the English the old settings had is the English the language file has
+        for (_, _, key, english) in OLD_MESSAGES {
+            assert_eq!(crate::i18n::Catalog::bundled().get("en_us", key), english, "{key}");
         }
-        assert_eq!(crate::i18n::Catalog::bundled().get("en_us", "kick.unsupported_version"), Versions::default().kick_unsupported_message);
-        m.invalid_session = "Log in again, please".into();
-        assert_eq!(m.custom("kick.invalid_session"), Some("Log in again, please"));
-        assert_eq!(m.custom("kick.internal_error"), None);
-        assert_eq!(m.custom("update.out"), None);
-        // a config from before languages existed
-        let old: Config = toml::from_str("[messages]\nusername_mismatch = \"Wrong name\"").unwrap();
-        assert_eq!((old.messages.language.as_str(), old.messages.custom("kick.username_mismatch")), ("auto", Some("Wrong name")));
+        // a new config has no message settings at all
+        let fresh = toml::to_string_pretty(&Config::default()).unwrap();
+        assert!(!fresh.contains("[messages]") && !fresh.contains("kick_unsupported") && fresh.contains("language = \"auto\""), "{fresh}");
     }
 
     #[test]
@@ -639,11 +656,11 @@ mod snippet_tests {
         let cfg: Config = toml::from_str(text).unwrap();
         let filled = fill_missing(text, &cfg).expect("settings were missing");
         // What was there is untouched, comments included.
-        assert!(filled.starts_with("# multiversion settings (players connect to [listen].address).\n\nconsole_colors = true\n\n[listen]\naddress = \"0.0.0.0:25570\"  # my port\n"), "{filled}");
+        assert!(filled.starts_with("# multiversion settings (players connect to [listen].address).\n\nconsole_colors = true\nlanguage = \"auto\"\n\n[listen]\naddress = \"0.0.0.0:25570\"  # my port\n"), "{filled}");
         // A file with no opening comment, and one that sets the top-level setting itself.
-        assert!(fill_missing("[listen]\naddress = \"0.0.0.0:1\"\n", &cfg).unwrap().starts_with("console_colors = true\n\n[listen]\n"));
+        assert!(fill_missing("[listen]\naddress = \"0.0.0.0:1\"\n", &cfg).unwrap().starts_with("console_colors = true\nlanguage = \"auto\"\n\n[listen]\n"));
         let own = fill_missing("console_colors = false\n[listen]\naddress = \"0.0.0.0:1\"\n", &Config { console_colors: false, ..Config::default() }).unwrap();
-        assert!(own.starts_with("console_colors = false\n[listen]\n") && own.matches("console_colors").count() == 1, "{own}");
+        assert!(own.starts_with("language = \"auto\"\n\nconsole_colors = false\n[listen]\n") && own.matches("console_colors").count() == 1, "{own}");
         // It reads back as the same settings, now all present.
         let back: Config = toml::from_str(&filled).unwrap();
         assert_eq!(back.listen.address, "0.0.0.0:25570");

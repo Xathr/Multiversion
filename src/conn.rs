@@ -163,19 +163,12 @@ impl Connection {
         out.push(Action::SendBackend(bytes));
     }
 
-    /// Disconnects the client with one of the plugin's messages, by its language key: in the
-    /// admin's own wording if they set one, else from the language files.
+    /// Disconnects the client with one of the plugin's messages, by its language key.
     fn kick_key(&mut self, key: &str, values: &[(&str, &str)], out: &mut Vec<Action>) {
-        let messages = &config::get().messages;
-        match messages.custom(key) {
-            Some(own) => self.kick_json(&crate::i18n::fill(own, values), out),
-            None => {
-                let json = crate::i18n::kick(&messages.language, self.client_version.protocol, key, values);
-                // the console reads English, whatever the player was told
-                let reason = crate::i18n::text(crate::i18n::DEFAULT, key, values);
-                self.kick_component(&json, &reason, out);
-            }
-        }
+        let json = crate::i18n::kick(&config::get().language, self.client_version.protocol, key, values);
+        // the console gets it in the server's language, whatever the player was told
+        let reason = crate::i18n::console(key, values);
+        self.kick_component(&json, &reason, out);
     }
 
     fn kick_json(&mut self, message: &str, out: &mut Vec<Action>) {
@@ -245,13 +238,13 @@ impl Connection {
     /// The client acknowledged login (or, for clients without a configuration phase, the proxy
     /// did for it): both sides enter configuration. Tell the backend, release held packets.
     fn enter_configuration(&mut self, shared: &Shared, out: &mut Vec<Action>) {
-        let how = match &self.chain {
-            Some(c) if !c.is_passthrough() => format!("translated to {}", crate::proto::version::BACKEND.name()),
-            _ => "native".to_string(),
-        };
-        let auth = if shared.config.auth.online_mode { "online" } else { "offline" };
         if config::get().logging.joins {
-            out.push(Action::Log(format!("{} {} {}", self.describe(), color::good("joined"), color::dim(&format!("({how}, {auth} mode)")))));
+            let auth = crate::i18n::console(if shared.config.auth.online_mode { "console.online" } else { "console.offline" }, &[]);
+            let how = match &self.chain {
+                Some(c) if !c.is_passthrough() => crate::i18n::console("console.join_translated", &[("server", &crate::proto::version::BACKEND.name()), ("auth", &auth)]),
+                _ => crate::i18n::console("console.join_native", &[("auth", &auth)]),
+            };
+            out.push(Action::Log(format!("{} {} {}", self.describe(), color::good(&crate::i18n::console("console.joined", &[])), color::dim(&how))));
         }
         self.phase = Phase::Configuration;
         self.client_in.max_frame = crate::proto::frame::MAX_FRAME;
@@ -293,15 +286,10 @@ impl Connection {
                 if !translate::is_supported(self.client_version) || !shared.config.versions.permits(self.client_version) {
                     self.phase = Phase::LoginStart; // so the kick is delivered as a login disconnect
                     // Sent before the client has said anything about itself, and to clients of any
-                    // age: plain text in the server's language, or the admin's own wording.
+                    // age: plain text in the server's language.
                     let values = [("versions", translate::allowed_range(&shared.config.versions)), ("client", self.client_version.name())];
                     let values: Vec<(&str, &str)> = values.iter().map(|(name, value)| (*name, value.as_str())).collect();
-                    let own = &shared.config.versions.kick_unsupported_message;
-                    let msg = if *own != crate::config::Versions::default().kick_unsupported_message {
-                        crate::i18n::fill(own, &values)
-                    } else {
-                        crate::i18n::text(&crate::i18n::server_language(&shared.config.messages.language), "kick.unsupported_version", &values)
-                    };
+                    let msg = crate::i18n::console("kick.unsupported_version", &values);
                     return Err(msg);
                 }
                 self.chain = Chain::for_client(self.client_version);
@@ -476,7 +464,7 @@ impl Connection {
                 self.kick_key("kick.invalid_session", &[], out);
             }
             crate::auth::AuthOutcome::Error(e) => {
-                err_log(out, color::bad(&format!("session check failed for {}: {e}", self.username)));
+                err_log(out, color::bad(&crate::i18n::console("console.session_check_failed", &[("player", &self.username), ("error", &e)])));
                 self.kick_key("kick.auth_servers_down", &[], out);
             }
         }
@@ -527,7 +515,7 @@ impl Connection {
         match self.phase {
             Phase::StatusBackendHandshake => self.finish_status(None, shared, out),
             _ => {
-                err_log(out, color::bad(&format!("backend connect failed: {error}")));
+                err_log(out, color::bad(&crate::i18n::console("console.backend_connect_failed", &[("error", &error.to_string())])));
                 self.kick_key("kick.server_starting", &[], out);
             }
         }
@@ -548,7 +536,7 @@ impl Connection {
                 }
                 Ok(Some(crate::proto::frame::Frame::Packet(pkt))) => {
                     if let Err(e) = self.handle_backend_packet(pkt, shared, out) {
-                        err_log(out, color::bad(&format!("backend packet error for {}: {e}", self.username)));
+                        err_log(out, color::bad(&crate::i18n::console("console.backend_packet_error", &[("player", &self.username), ("error", &e)])));
                         self.kick_key(if e.contains("pumpkin.toml") { "kick.misconfigured" } else { "kick.internal_error" }, &[], out);
                         return;
                     }
@@ -558,7 +546,7 @@ impl Connection {
                 }
                 Ok(None) => return,
                 Err(e) => {
-                    err_log(out, color::bad(&format!("backend framing error: {e}")));
+                    err_log(out, color::bad(&crate::i18n::console("console.backend_framing_error", &[("error", &e.to_string())])));
                     self.kick_key("kick.internal_error", &[], out);
                     return;
                 }
@@ -621,9 +609,9 @@ impl Connection {
                 ids::LOGIN_C_DISCONNECT => {
                     let mut r = Reader::new(&payload);
                     let reason = r.string().unwrap_or("{}").to_string();
-                    err_log(out, color::bad(&format!("backend refused login for {}: {reason}", self.username)));
+                    err_log(out, color::bad(&crate::i18n::console("console.backend_refused", &[("player", &self.username), ("reason", &reason)])));
                     if reason.contains("Unable to verify player details") {
-                        out.push(Action::Log("Pumpkin rejected the forwarded identity: [networking.proxy.velocity] secret in pumpkin.toml must equal forwarding_secret in plugins/data/multiversion/config.toml (see plugins/data/multiversion/pumpkin-settings.txt), then restart".into()));
+                        out.push(Action::Log(crate::i18n::console("console.secret_rejected", &[])));
                     }
                     // Forward the reason as-is (JSON text component is valid for all versions).
                     let pkt = Packet::new(ids::LOGIN_C_DISCONNECT, payload);
@@ -740,7 +728,7 @@ impl Connection {
             (State::Play, ids::PLAY_C_START_CONFIGURATION) => self.state = State::Configuration,
             (State::Configuration, ids::CONFIG_C_DISCONNECT) | (State::Play, ids::PLAY_C_DISCONNECT) => {
                 if config::get().logging.leaves {
-                    out.push(Action::Log(format!("{} {}", color::name(&self.username), color::warn("disconnected by server"))));
+                    out.push(Action::Log(format!("{} {}", color::name(&self.username), color::warn(&crate::i18n::console("console.disconnected_by_server", &[])))));
                 }
             }
             _ => {}

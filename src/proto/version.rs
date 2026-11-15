@@ -43,7 +43,7 @@ impl Version {
         KNOWN
             .iter()
             .find(|v| v.protocol == self.protocol)
-            .map_or_else(|| format!("protocol {}", self.protocol), |v| v.name.to_string())
+            .map_or_else(|| crate::i18n::console("version.protocol", &[("number", &self.protocol.to_string())]), |v| v.name.to_string())
     }
     pub fn from_name(name: &str) -> Option<Version> {
         KNOWN.iter().find(|v| v.name == name).map(|v| Version { protocol: v.protocol })

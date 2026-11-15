@@ -73,15 +73,15 @@ mod plugin {
             };
             // Builds a line with colours on for chat, whatever console_colors says.
             let coloured = |f: &dyn Fn() -> String| if console { f() } else { crate::color::with_colours(f) };
-            // A player reads the replies in their game's language; the console in English.
+            // A player reads the replies in their game's language; the console in its own.
             let locale = match sender.as_player() {
                 Some(player) => player.get_locale(),
-                None => crate::i18n::DEFAULT.to_string(),
+                None => crate::i18n::console_language(),
             };
             let say = |key: &str| send(&coloured(&|| crate::color::dim(&crate::i18n::text(&locale, key, &[]))));
             match self.0 {
                 None => {
-                    let lines = if console { updater::lines(&updater::status()) } else { crate::color::with_colours(|| updater::lines(&updater::status())) };
+                    let lines = if console { updater::lines(&updater::status()) } else { crate::color::with_colours(|| updater::lines_in(&locale, &updater::status())) };
                     for line in lines {
                         send(&line);
                     }
@@ -221,8 +221,14 @@ mod plugin {
             let config = crate::config::Config::load_or_create(&path).map_err(|e| format!("multiversion: {e}"))?;
             crate::color::set_enabled(config.console_colors);
             crate::config::set_active(config.clone());
-            // Text for players: the built-in languages plus whatever is in the lang folder.
-            let (catalog, problems) = crate::i18n::load_folder(&format!("{folder}/lang"));
+            // Every message: the built-in languages plus whatever is in the lang folder.
+            let lang_folder = format!("{folder}/lang");
+            let server_language = crate::i18n::server_language(&config.language);
+            // Messages an older config.toml had reworded move into the server language's file.
+            let moved = crate::config::take_moved_messages();
+            let moved_count = if moved.is_empty() { Ok(0) } else { crate::i18n::store_texts(&lang_folder, &server_language, &moved) };
+            let (catalog, problems) = crate::i18n::load_folder(&lang_folder);
+            crate::i18n::set_server_language(&config.language);
             let languages = catalog.languages().len();
             crate::i18n::install(catalog);
             // Pumpkin lets a plugin write only its own data folder, so the pumpkin.toml settings
@@ -240,18 +246,27 @@ mod plugin {
             for line in crate::banner::lines(&info) {
                 crate::log::info(&line);
             }
-            let language = &config.messages.language;
-            let chosen = if crate::i18n::normalise(language) == "auto" { "auto (English, and the game's own words where it has them)".to_string() } else { language.clone() };
-            crate::log::info(&format!("  {}     {languages} in plugins/data/multiversion/lang; messages.language = {chosen}", crate::color::dim("languages")));
+            let language = &config.language;
+            let chosen = if crate::i18n::normalise(language) == "auto" { crate::i18n::console("console.language_auto", &[]) } else { language.clone() };
+            crate::log::info(&format!(
+                "  {} {}",
+                crate::color::dim(&crate::banner::label(&crate::i18n::console("console.languages", &[]))),
+                crate::i18n::console("console.languages_detail", &[("count", &languages.to_string()), ("language", &chosen)])
+            ));
             for problem in &problems {
-                crate::log::warn(&format!("language file {problem}"));
+                crate::log::warn(&crate::i18n::console("console.language_file_problem", &[("problem", problem)]));
+            }
+            match moved_count {
+                Ok(0) => {}
+                Ok(count) => crate::log::info(&crate::i18n::console("console.moved_messages", &[("count", &count.to_string()), ("file", &server_language)])),
+                Err(e) => crate::log::warn(&crate::i18n::console("console.language_file_problem", &[("problem", &e)])),
             }
             let wanted = crate::i18n::server_language(language);
             if crate::i18n::normalise(language) != "auto" && !crate::i18n::has(&wanted) {
-                crate::log::warn(&format!("messages.language = \"{language}\" has no file in the lang folder: players get English. Add lang/{wanted}.json or pick one that is there."));
+                crate::log::warn(&crate::i18n::console("console.language_missing", &[("language", language), ("file", &wanted)]));
             }
             if config.backend.forwarding_secret.is_empty() {
-                crate::log::warn("backend.forwarding_secret is empty; Pumpkin will reject logins. Set it in config.toml and pumpkin.toml.");
+                crate::log::warn(&crate::i18n::console("console.secret_empty", &[]));
             }
             *self.config.lock().unwrap() = Some(config.clone());
             // Ask the Market for a newer version now, before the proxy carries any players.
@@ -292,7 +307,7 @@ mod plugin {
                 for line in crate::config::setup_message(&config, &crate::config::ALL_NEEDS) {
                     crate::log::warn(&line);
                 }
-                crate::log::warn("Until then the plugin is idle and only this server's own version can join.");
+                crate::log::warn(&crate::i18n::console("console.setup_idle", &[]));
             }
             // Bedrock players reach Pumpkin directly; log their version and device the same way.
             context.register_event_handler::<pumpkin_plugin_api::events::PlayerJoinEvent, _>(crate::bedrock_log::JoinLog, pumpkin_plugin_api::events::EventPriority::Lowest, false)?;

@@ -56,20 +56,28 @@ pub fn lines(info: &Info) -> Vec<String> {
         })
         .collect();
 
+    let tr = |key: &str| crate::i18n::console(key, &[]);
     let login = if info.online_mode {
-        format!("{} {}", color::good("online"), color::dim("(checked with Mojang)"))
+        format!("{} {}", color::good(&tr("console.online")), color::dim(&tr("banner.online_detail")))
     } else {
-        format!("{} {}", color::warn("offline"), color::dim("(no Mojang check)"))
+        format!("{} {}", color::warn(&tr("console.offline")), color::dim(&tr("banner.offline_detail")))
     };
     for (key, value) in [
-        ("versions", color::version(info.range)),
-        ("listening on", color::name(info.listen)),
-        ("Pumpkin at", color::dim(info.backend)),
-        ("login", login),
+        ("banner.versions", color::version(info.range)),
+        ("banner.listening", color::name(info.listen)),
+        ("banner.pumpkin", color::dim(info.backend)),
+        ("banner.login", login),
     ] {
-        out.push(format!("  {} {value}", color::dim(&format!("{key:<13}"))));
+        out.push(format!("  {} {value}", color::dim(&label(&tr(key)))));
     }
     out
+}
+
+/// A banner row's name, padded so the values line up in a column (13 characters, or the name
+/// and a space if a language's word is longer).
+pub fn label(name: &str) -> String {
+    let width = name.chars().count();
+    format!("{name}{}", " ".repeat(13usize.saturating_sub(width).max(1)))
 }
 
 #[cfg(test)]

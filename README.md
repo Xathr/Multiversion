@@ -174,6 +174,9 @@ console always shows plain text.
 
 
 ```toml
+console_colors = true              # false = plain console text
+language = "auto"                  # a locale with a file in lang/ ("de_de"), or "auto": see Languages below
+
 [listen]
 address = "0.0.0.0:25565"          # public port players use
 
@@ -197,7 +200,6 @@ deny = []                          # refused even if allowed above
 # Entries: a version "1.21.4", a family "1.21.*", or a range "1.21.5-26.3" (either end optional).
 # Patch releases that share a protocol count as one: 1.19.2 = 1.19.1, 1.20.1 = 1.20, 1.20.4 = 1.20.3, 1.20.6 = 1.20.5,
 # 1.21.1 = 1.21, 1.21.3 = 1.21.2, 1.21.8 = 1.21.7, 1.21.10 = 1.21.9. Example: allow = ["1.21.*", "26.3"], deny = ["1.21"].
-kick_unsupported_message = "This server supports Minecraft {versions}. You are on {client}."
 
 [limits]
 compression_threshold = 256        # packets to players above this size are compressed; -1 = off
@@ -210,16 +212,6 @@ max_connections_per_ip_per_10s = 40  # new connections one address may open per 
 check = true                       # ask the Pumpkin Market for the latest version at startup
 notify_ops = true                  # tell operators in game when a newer version is out
 download = false                   # download a newer, Market-signed Multiversion.wasm at startup
-
-[messages]                         # what players see when they're disconnected
-language = "auto"                  # a locale with a file in lang/ ("de_de"), or "auto": see Languages below
-server_starting = "The server is starting up. Please try again in a moment."
-auth_servers_down = "Authentication servers are down. Please try again later, sorry!"
-invalid_session = "Invalid session (Try restarting your game and the launcher)"
-username_mismatch = "Username mismatch"
-internal_error = "Internal proxy error"
-misconfigured = "Server misconfigured: see the server console."
-protocol_error = "Protocol error: {error}"
 
 [logging]                          # what goes in the console
 joins = true
@@ -261,7 +253,7 @@ cushions appear as carpet blocks; new enchantment effect definitions are not sho
 
 ## Languages
 
-Every message a player can see is in a language file, one per language, in
+Every message, for players and for the console, is in a language file, one per language, in
 `plugins/data/multiversion/lang/`. The plugin writes the ones it comes with there on first
 start: English, German, Spanish, French, Italian, Japanese, Korean, Dutch, Polish, Portuguese
 (Brazil), Russian, Turkish and Chinese (simplified).
@@ -277,14 +269,17 @@ Which language a player gets:
 | Message | Language |
 |---|---|
 | The update notice operators see in game, and replies to `/multiversion update` | The player's own game language (`es_mx` reads `es_es.json` if there is no `es_mx.json`), English if there is no file for it |
-| Kick messages while joining | `[messages] language` in `config.toml`, because a client has not said what language it uses yet |
+| Kick messages while joining | `language` in `config.toml`, because a client has not said what language it uses yet |
+| The console (startup lines, joins, leaves, errors, setup help) | `language` in `config.toml`; English with `auto` |
 
 With `language = "auto"` (the default) kick messages are in English, except the two the game has
 its own words for (an invalid session, and Mojang's login servers being down): those are sent as
 the game's own message, so every player reads them in their own language.
 
-A message you have reworded in `[messages]` in `config.toml` is used as you wrote it, in every
-language. The console is always in English. The translations that come with the plugin have not
+`config.toml` holds no messages. If yours is from an older version and has a `[messages]` section
+or `kick_unsupported_message`, the plugin removes them on the next start and writes any text you
+had reworded into the language file, so nothing you changed is lost. Only the `debug` lines stay
+in English. The translations that come with the plugin have not
 been checked by native speakers; corrections are welcome.
 
 ## Performance monitoring

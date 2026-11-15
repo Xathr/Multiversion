@@ -82,7 +82,7 @@ fn finish(status: Status) -> FlowProgress {
 /// A failed download leaves the "newer version is out" status as it was.
 fn download_failed(latest: String, why: &str) -> FlowProgress {
     set_status(Status::Available { latest, downloaded: None });
-    let mut out = vec![crate::color::bad(&format!("update download failed: {why}"))];
+    let mut out = vec![crate::color::bad(&crate::i18n::console("update.console.download_failed", &[("error", why)]))];
     out.extend(lines(&status()));
     FlowProgress::Done(out)
 }
@@ -94,7 +94,7 @@ impl Flow {
             Job::Check => (Step::Check, update::check_url(VERSION), 64 * 1024),
             Job::Download => match status() {
                 Status::Available { latest, .. } => (Step::Key { latest }, update::PUBLIC_KEY_URL.to_string(), 4096),
-                other => return FlowProgress::Done([vec!["there is no newer version to download".to_string()], lines(&other)].concat()),
+                other => return FlowProgress::Done([vec![crate::i18n::console("update.console.nothing", &[])], lines(&other)].concat()),
             },
         };
         Self::request(job, step, &url, max, 0)
@@ -194,19 +194,25 @@ pub fn run_blocking(job: Job) -> Vec<String> {
 
 /// The update status as console lines.
 pub fn lines(status: &Status) -> Vec<String> {
+    lines_in(&crate::i18n::console_language(), status)
+}
+
+/// The update status as lines in a player's language (`locale`), for chat.
+pub fn lines_in(locale: &str, status: &Status) -> Vec<String> {
     use crate::color;
+    let tr = |key: &str, values: &[(&str, &str)]| crate::i18n::text(locale, key, values);
     match status {
-        Status::Off => vec![color::dim("update check is off ([updates] check = false in config.toml)")],
-        Status::Current { latest } => vec![format!("{} {}", color::good(&format!("multiversion v{VERSION} is up to date")), color::dim(&format!("(latest on the Pumpkin Market: v{latest})")))],
-        Status::Failed(why) => vec![color::dim(&format!("update check failed: {why}"))],
+        Status::Off => vec![color::dim(&tr("update.console.off", &[]))],
+        Status::Current { latest } => vec![format!("{} {}", color::good(&tr("update.console.current", &[("current", VERSION)])), color::dim(&tr("update.console.current_detail", &[("latest", latest)])))],
+        Status::Failed(why) => vec![color::dim(&tr("update.console.failed", &[("error", why)]))],
         Status::Available { latest, downloaded } => {
             let mut out = vec![
-                format!("{} {}", color::warn(&format!("multiversion v{latest} is out")), color::dim(&format!("(this server runs v{VERSION})"))),
-                format!("{} {}", color::dim("Pumpkin Market:"), color::version(update::PAGE_URL)),
+                format!("{} {}", color::warn(&tr("update.console.available", &[("latest", latest)])), color::dim(&tr("update.console.available_detail", &[("current", VERSION)]))),
+                format!("{} {}", color::dim(&tr("update.console.market", &[])), color::version(update::PAGE_URL)),
             ];
             out.push(match downloaded {
-                Some(path) => format!("{} {path}. Stop the server and copy it over plugins/Multiversion.wasm.", color::good("downloaded, signed by the Market:")),
-                None => color::dim("run /multiversion update download to fetch the signed file"),
+                Some(path) => format!("{} {}", color::good(&tr("update.console.downloaded", &[])), tr("update.console.downloaded_next", &[("path", path)])),
+                None => color::dim(&tr("update.console.fetch_hint", &[])),
             });
             out
         }

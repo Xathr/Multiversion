@@ -123,16 +123,16 @@ impl ProxyHandler {
         match verdict {
             Verdict::Ready => log::info(&format!(
                 "{} {}",
-                crate::color::good("setup check passed:"),
-                crate::color::dim(&format!("Pumpkin is on {} and accepts the players this plugin forwards", self.backend_addr))
+                crate::color::good(&crate::i18n::console("console.setup_passed", &[])),
+                crate::color::dim(&crate::i18n::console("console.setup_passed_detail", &[("address", &self.backend_addr.to_string())]))
             )),
             Verdict::Needs(needs) => {
                 for line in crate::config::setup_message(&self.config, &needs) {
                     log::warn(&line);
                 }
-                log::warn("Until then players cannot join.");
+                log::warn(&crate::i18n::console("console.setup_blocked", &[]));
             }
-            Verdict::Unclear(why) => log::info(&crate::color::dim(&format!("setup check: Pumpkin answered the test login with: {why}"))),
+            Verdict::Unclear(why) => log::info(&crate::color::dim(&crate::i18n::console("console.setup_unclear", &[("reason", &why)]))),
         }
     }
 
@@ -189,7 +189,7 @@ impl ProxyHandler {
     fn close(&mut self, reactor: &mut Reactor, client: Token, reason: &str, abrupt: bool) {
         if let Some(c) = self.conns.remove(&client) {
             if crate::config::get().logging.leaves && c.phase != Phase::Status && c.phase != Phase::StatusBackendHandshake && c.phase != Phase::StatusBackendWait && !reason.starts_with("status") {
-                let msg = format!("{} {} {reason}", c.describe(), crate::color::warn("disconnected:"));
+                let msg = format!("{} {} {reason}", c.describe(), crate::color::warn(&crate::i18n::console("console.disconnected", &[])));
                 if c.phase == Phase::Handshake && c.username.is_empty() {
                     // Never sent a handshake: a port scanner or a client's connection probe.
                     log::debug(&msg);
@@ -276,7 +276,7 @@ impl Handler for ProxyHandler {
             }
             Event::Closed { token, reason } => {
                 if token == 0 {
-                    log::warn(&format!("listener: {reason}"));
+                    log::warn(&crate::i18n::console("console.listener", &[("reason", &reason.to_string())]));
                     return;
                 }
                 if let Some(client) = self.backend_of.remove(&token) {
@@ -379,7 +379,7 @@ pub fn tick() {
     crate::report::add(busy_us);
     CONNECTIONS.store(proxy.handler.conns.len(), std::sync::atomic::Ordering::Relaxed);
     if proxy.reactor.stopped() {
-        log::info(&crate::color::warn("proxy stopped"));
+        log::info(&crate::color::warn(&crate::i18n::console("console.proxy_stopped", &[])));
         *guard = None;
     }
 }
@@ -390,10 +390,7 @@ pub fn start(config: Config) -> Result<bool, String> {
     let listen = resolve(&config.listen.address)?;
     let backend_addr = resolve(&config.backend.address)?;
     if !backend_addr.ip().is_loopback() {
-        log::warn(&format!(
-            "backend.address {backend_addr} is not a loopback address: other machines can reach Pumpkin's port directly, \
-             and the forwarding secret is all that stops them logging in as anyone. Use 127.0.0.1, or firewall that port."
-        ));
+        log::warn(&crate::i18n::console("console.backend_not_local", &[("address", &backend_addr.to_string())]));
     }
     // Only online-mode logins are encrypted. Made now for those, so the first player doesn't
     // wait for it; an offline-mode server skips it (and would still make one on demand).
@@ -405,7 +402,7 @@ pub fn start(config: Config) -> Result<bool, String> {
         }
         return Err(e);
     }
-    log::info(&format!("{} on {}", crate::color::good("accepting connections"), crate::color::version(&listen.to_string())));
+    log::info(&crate::i18n::painted("console.accepting", crate::color::good, &[("address", &crate::color::version(&listen.to_string()))]));
     let handler = ProxyHandler {
         config,
         keys,

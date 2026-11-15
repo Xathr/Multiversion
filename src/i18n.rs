@@ -135,8 +135,12 @@ impl Catalog {
     /// fallback for clients that can show one.
     pub fn kick_component(&self, language: &str, protocol: i32, key: &str, values: &[(&str, &str)]) -> String {
         let auto = normalise(language) == "auto";
-        let text = fill(self.get(if auto { DEFAULT } else { language }, key), values);
-        let game_key = GAME_KEYS.iter().find(|(ours, _)| *ours == key).map(|(_, game)| *game);
+        let own = self.get(if auto { DEFAULT } else { language }, key);
+        let text = fill(own, values);
+        // A message the admin has reworded in the English file is theirs: the game's words
+        // would replace it.
+        let reworded = built_in_english(key).is_some_and(|built_in| built_in != own);
+        let game_key = GAME_KEYS.iter().find(|(ours, _)| *ours == key).map(|(_, game)| *game).filter(|_| !reworded);
         match game_key {
             Some(game) if auto && protocol >= FALLBACK_FROM => serde_json::json!({ "translate": game, "fallback": text }),
             Some(game) if auto && protocol >= GAME_KEYS_FROM => serde_json::json!({ "translate": game }),
@@ -144,6 +148,40 @@ impl Catalog {
         }
         .to_string()
     }
+}
+
+/// The English text the plugin was built with, whatever the lang folder says now.
+fn built_in_english(key: &str) -> Option<&'static str> {
+    static ENGLISH: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceLock::new();
+    ENGLISH.get_or_init(|| serde_json::from_str(BUNDLED.iter().find(|(code, _)| *code == DEFAULT).map_or("{}", |(_, json)| json)).unwrap_or_default()).get(key).map(String::as_str)
+}
+
+/// Writes texts into one language's file in the folder, creating it from the built-in file (or
+/// empty, for a language that has none) if it isn't there. A text the file already has in a
+/// wording of its own is left alone. Used once, for messages an older config.toml had reworded.
+pub fn store_texts(folder: &str, locale: &str, texts: &[(String, String)]) -> Result<usize, String> {
+    let code = normalise(locale);
+    if !valid_code(&code) {
+        return Err(format!("\"{code}\" is not a locale name like en_us"));
+    }
+    std::fs::create_dir_all(folder).map_err(|e| format!("{folder}: {e}"))?;
+    let path = format!("{folder}/{code}.json");
+    let built_in = BUNDLED.iter().find(|(c, _)| *c == code).map_or("{}", |(_, json)| json);
+    let current = std::fs::read_to_string(&path).unwrap_or_else(|_| built_in.to_string());
+    let mut file: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&current).map_err(|e| format!("{path}: {e}"))?;
+    let original: serde_json::Map<String, serde_json::Value> = serde_json::from_str(built_in).unwrap_or_default();
+    let mut stored = 0;
+    for (key, text) in texts {
+        if file.get(key).is_none() || file.get(key) == original.get(key) {
+            file.insert(key.clone(), serde_json::Value::String(text.clone()));
+            stored += 1;
+        }
+    }
+    if stored > 0 {
+        let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
+        std::fs::write(&path, json + "\n").map_err(|e| format!("{path}: {e}"))?;
+    }
+    Ok(stored)
 }
 
 /// Loads the language folder: writes the built-in files that aren't there yet, then reads every
@@ -200,6 +238,53 @@ pub fn server_language(setting: &str) -> String {
 pub fn has(locale: &str) -> bool {
     let locale = normalise(locale);
     with(|catalog| catalog.resolve(&locale) != DEFAULT || locale.starts_with("en_") || locale == "en")
+}
+
+static SERVER_LANGUAGE: RwLock<String> = RwLock::new(String::new());
+
+/// Sets the language of the console and of text sent before a player's language is known
+/// (the config's `language`; "auto" means English).
+pub fn set_server_language(setting: &str) {
+    *SERVER_LANGUAGE.write().unwrap_or_else(|e| e.into_inner()) = server_language(setting);
+}
+
+/// The language the console speaks.
+pub fn console_language() -> String {
+    let language = SERVER_LANGUAGE.read().unwrap_or_else(|e| e.into_inner()).clone();
+    if language.is_empty() { DEFAULT.to_string() } else { language }
+}
+
+/// The text for `key` in the server's language, with `values` filled in: what the console says.
+pub fn console(key: &str, values: &[(&str, &str)]) -> String {
+    let language = SERVER_LANGUAGE.read().unwrap_or_else(|e| e.into_inner()).clone();
+    text(if language.is_empty() { DEFAULT } else { &language }, key, values)
+}
+
+/// A console line in colour: the words of the text are painted with `base`, and each
+/// `{placeholder}` is replaced by its value, which keeps whatever colour it already has.
+pub fn painted(key: &str, base: impl Fn(&str) -> String, values: &[(&str, &str)]) -> String {
+    let text = console(key, &[]);
+    let mut out = String::new();
+    let mut rest = text.as_str();
+    while let Some(open) = rest.find('{') {
+        let Some(close) = rest[open..].find('}') else { break };
+        let name = &rest[open + 1..open + close];
+        let Some((_, value)) = values.iter().find(|(n, _)| *n == name) else {
+            // not a placeholder of this message: part of the words
+            out.push_str(&base(&rest[..open + close + 1]));
+            rest = &rest[open + close + 1..];
+            continue;
+        };
+        if open > 0 {
+            out.push_str(&base(&rest[..open]));
+        }
+        out.push_str(value);
+        rest = &rest[open + close + 1..];
+    }
+    if !rest.is_empty() {
+        out.push_str(&base(rest));
+    }
+    out
 }
 
 /// The text for `key` in a player's language, with `values` filled in.
@@ -312,9 +397,47 @@ mod tests {
         assert_eq!(json("Auto", 777, "kick.protocol_error"), serde_json::json!({ "text": "Protocol error: bad varint" }));
         // a language there is no file for: English
         assert_eq!(json("xx_yy", 777, "kick.internal_error"), serde_json::json!({ "text": "Internal proxy error" }));
+        // a message reworded in the English file is sent as written, not as the game's own
+        let mut reworded = Catalog::bundled();
+        reworded.add("en_us", r#"{"kick.invalid_session": "Log in again, please"}"#).unwrap();
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&reworded.kick_component("auto", 777, "kick.invalid_session", &[])).unwrap(), serde_json::json!({ "text": "Log in again, please" }));
         assert_eq!(server_language("auto"), "en_us");
         assert!(has("de_at") && has("en_gb") && has("pt-PT") && !has("xx_yy") && !has("sv_se"));
         assert_eq!(server_language("pt-BR"), "pt_br");
+    }
+
+    #[test]
+    fn console_lines_keep_the_colours_of_their_values() {
+        let upper = |words: &str| words.to_uppercase();
+        // kick.protocol_error is "Protocol error: {error}" in English
+        assert_eq!(painted("kick.protocol_error", upper, &[("error", "<bad varint>")]), "PROTOCOL ERROR: <bad varint>");
+        assert_eq!(painted("kick.unsupported_version", upper, &[("versions", "[1.18]"), ("client", "[1.8]")]), "THIS SERVER SUPPORTS MINECRAFT [1.18]. YOU ARE ON [1.8].");
+        // a placeholder nobody gave a value for stays as it is
+        assert_eq!(painted("kick.protocol_error", upper, &[]), "PROTOCOL ERROR: {ERROR}");
+        assert_eq!(painted("kick.username_mismatch", upper, &[]), "USERNAME MISMATCH");
+        assert_eq!(console("kick.protocol_error", &[("error", "x")]), "Protocol error: x");
+    }
+
+    /// Messages an older config.toml had reworded land in the language file, once.
+    #[test]
+    fn moved_messages_are_stored_in_the_language_file() {
+        let folder = std::env::temp_dir().join(format!("multiversion-moved-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let path = folder.to_str().unwrap();
+        let moved = [("kick.invalid_session".to_string(), "Log in again".to_string())];
+        assert_eq!(store_texts(path, "en_us", &moved), Ok(1));
+        let (catalog, problems) = load_folder(path);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(catalog.get("en_us", "kick.invalid_session"), "Log in again");
+        assert_eq!(catalog.get("en_us", "kick.username_mismatch"), "Username mismatch", "the rest of the file is the built-in one");
+        // a second time changes nothing: the file has its own wording now
+        assert_eq!(store_texts(path, "en_us", &[("kick.invalid_session".to_string(), "Something else".to_string())]), Ok(0));
+        assert_eq!(load_folder(path).0.get("en_us", "kick.invalid_session"), "Log in again");
+        // a language with no built-in file gets a file of its own
+        assert_eq!(store_texts(path, "sv_se", &moved), Ok(1));
+        assert_eq!(load_folder(path).0.get("sv_se", "kick.invalid_session"), "Log in again");
+        assert!(store_texts(path, "../x", &moved).is_err());
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]
