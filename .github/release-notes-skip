@@ -1,0 +1,4 @@
+Works behind a Velocity or Vine proxy
+Proxy support is taken out again
+Quick setup: four fixed pumpkin.toml lines that can be set before the first start; a private secret still works
+Setup goes back to a private, generated secret only: a secret everyone knows is too easy to expose

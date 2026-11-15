@@ -62,7 +62,9 @@ jobs:
           {
             echo "## Changes${prev:+ since $prev}"
             echo
-            changes=$(git log "${prev:+$prev..}HEAD" --no-merges --format='- %s')
+            # Subjects listed in .github/release-notes-skip (one per line) are left out: changes
+            # that were undone again before the release.
+            changes=$(git log "${prev:+$prev..}HEAD" --no-merges --format='- %s' | { grep -vxFf <(sed 's/^/- /' .github/release-notes-skip 2>/dev/null) || true; })
             echo "${changes:-- Minor fixes}"
             echo
           } > changes.md
