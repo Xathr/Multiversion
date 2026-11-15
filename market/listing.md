@@ -9,7 +9,7 @@ Copy each field into the Store Listing form at market.pumpkinmc.org.
 | Pricing | Free |
 | Release channel | Beta |
 | Version | 0.6.0 |
-| Binary | `Multiversion.wasm` from the latest release of this repository (about 2.8 MB, under the 5 MB limit) |
+| Binary | `Multiversion.wasm` from the latest release of this repository (about 2.9 MB, under the 5 MB limit) |
 | Icon | `logo.png` (512×512) |
 | Screenshots | `screenshot-versions.png`, `screenshot-console.png`, `screenshot-status.png`, `screenshot-config.png` (1600×900 each) |
 | Source link | https://github.com/Xathr/Multiversion |
