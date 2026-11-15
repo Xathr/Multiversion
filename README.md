@@ -157,37 +157,11 @@ The plugin is the server's front door, so it limits what a connection can cost b
 `cargo test` includes a test that throws hundreds of thousands of malformed packets at every
 version's translators and fails on any panic, hang or oversized reply.
 
-## Behind a proxy (Velocity or Vine)
+## Proxies
 
-On a network, put Multiversion on each Pumpkin server that should accept other versions. The
-proxy logs players in and passes them on in their own version; the plugin takes the player's
-identity from the proxy and translates as usual. It cannot run on the proxy itself: Velocity
-loads Java plugins, and Vine's plugins do not see the game's packets.
-
-1. Point the proxy at the plugin's port (`[listen].address`), not at Pumpkin's.
-2. Give the plugin the proxy's secret in `config.toml`, then restart:
-
-   | Proxy | Proxy setting | `[proxy]` in `config.toml` |
-   |---|---|---|
-   | Velocity | `player-info-forwarding-mode = "modern"` | `velocity_secret` = the contents of Velocity's `forwarding.secret` file |
-   | Vine | `forwarding = "vine"` for this server | `vine_secret` = this server's `secret` in `vine.toml` (or `vine_public_key`) |
-
-That is all. `mode = "auto"` works out which proxy it is from the first player it passes on and
-writes `mode = "velocity"` or `"vine"` into the file. If a proxy connects before you have set its
-secret, the console says which proxy it is and which line to fill in.
-
-Once a secret is set, players can only join through the proxy; someone connecting to the server
-directly is told to use the network's address. `[auth]` and the limits per address are not
-used then, since the proxy does the login and every player arrives from its address. The
-plugin's link to Pumpkin does not change.
-
-Vine with `forwarding = "velocity"` also works: set `velocity_secret` to the server's secret in
-`vine.toml`. BungeeCord's forwarding is not supported, because it is not signed.
-
-Tested with Velocity 3.5.1 and 1.18.2, 1.19.4, 1.20.4 and 1.21.4 clients, and with Vine (commit
-`9c02728`) and 1.21.1, 1.21.5 to 1.21.11 and 26.1 clients. That Vine build drops 1.18.2, 1.20.4
-and 1.21.4 clients a moment after they join: it mistakes one of their packets for a disconnect.
-That happens inside Vine, before the plugin can do anything about it.
+Multiversion is for a Pumpkin server players connect to directly. It does not work behind a
+proxy (Velocity, Vine, BungeeCord): it logs players in itself and does not take a player's
+identity from a proxy.
 
 ## Bedrock players in the console
 
@@ -222,12 +196,6 @@ pumpkin_compression = false        # true keeps Pumpkin compressing its local li
 online_mode = true                 # verify players with Mojang
 session_server = "https://sessionserver.mojang.com"
 prevent_proxy_connections = false  # pass the client IP to Mojang
-
-[proxy]                            # a Velocity or Vine proxy in front: see "Behind a proxy"
-mode = "auto"                      # auto, none, velocity or vine; auto is replaced once a proxy is seen
-velocity_secret = ""               # Velocity's forwarding.secret
-vine_secret = ""                   # this server's secret in vine.toml
-vine_public_key = ""               # or Vine's public key, instead of the secret
 
 [status]
 version_name = ""                  # server-list text; empty = the allowed range, e.g. "1.18-26.3"
@@ -336,7 +304,6 @@ cargo test --release   # native unit tests
 ```
 src/lib.rs            plugin entry (metadata, on_load, scheduled proxy task)
 src/config.rs         config.toml
-src/forward.rs        the identity a Velocity or Vine proxy passes on, and checking its signature
 src/i18n.rs           language files: the built-in ones (lang/*.json) and the ones in the data folder
 src/net/reactor.rs    poll-based reactor over WASI 0.2 TCP sockets
 src/proto/            varint/strings, NBT, framing (zlib, AES-CFB8), version table

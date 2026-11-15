@@ -75,17 +75,5 @@
   "update.console.fetch_hint": "imzalı dosyayı almak için /multiversion update download komutunu çalıştırın",
   "update.console.download_failed": "güncelleme indirilemedi: {error}",
   "update.console.nothing": "indirilecek daha yeni bir sürüm yok",
-  "version.protocol": "protokol {number}",
-  "kick.proxy_only": "Lütfen doğrudan bu sunucudan değil, ağın adresinden katılın.",
-  "console.proxy": "proxy",
-  "console.proxy_refused": "{proxy}, {player} oyuncusunu iletti ama bu sunucu kabul etmedi: {reason}",
-  "proxy.bad_signature": "config.toml içindeki [proxy] bölümündekinden farklı bir sır veya anahtarla imzalanmış",
-  "proxy.bad_data": "veri bu eklentinin okuyabileceği biçimde değil",
-  "proxy.bad_challenge": "başka bir girişe verilmiş yanıt",
-  "proxy.bad_key": "config.toml içindeki vine_public_key geçerli bir anahtar değil",
-  "console.proxy_detected": "{proxy} proxy algılandı: config.toml içindeki [proxy] mode artık \"{mode}\". Bundan sonra oyuncular yalnızca proxy üzerinden katılır.",
-  "console.proxy_detected_unsaved": "{proxy} proxy algılandı. config.toml içinde [proxy] mode = \"{mode}\" yapın.",
-  "console.proxy_needs_velocity_secret": "Bir Velocity proxy bu sunucuya oyuncu iletiyor, ancak plugins/data/multiversion/config.toml içindeki [proxy] altında velocity_secret boş. Velocity'nin forwarding.secret dosyasının içeriğini oraya yazın ve yeniden başlatın.",
-  "console.proxy_needs_vine_secret": "Bir proxy bu sunucuya oyuncu iletiyor, ancak plugins/data/multiversion/config.toml içindeki [proxy] bölümünde onun için bir sır yok. Vine için vine_secret değerini bu sunucunun Vine yapılandırmasındaki sırrı yapın; Velocity için velocity_secret değerini ayarlayın. Sonra yeniden başlatın.",
-  "banner.proxy_detail": "(oyuncular proxy üzerinden katılır)"
+  "version.protocol": "protokol {number}"
 }

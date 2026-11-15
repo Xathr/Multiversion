@@ -75,17 +75,5 @@
   "update.console.fetch_hint": "execute /multiversion update download para obter o arquivo assinado",
   "update.console.download_failed": "falha ao baixar a atualização: {error}",
   "update.console.nothing": "não há versão mais recente para baixar",
-  "version.protocol": "protocolo {number}",
-  "kick.proxy_only": "Entre pelo endereço da rede, não diretamente por este servidor.",
-  "console.proxy": "proxy",
-  "console.proxy_refused": "{proxy} encaminhou {player}, mas este servidor não aceitou: {reason}",
-  "proxy.bad_signature": "está assinado com um segredo ou uma chave diferente do que [proxy] tem em config.toml",
-  "proxy.bad_data": "os dados não estão em um formato que este plugin consiga ler",
-  "proxy.bad_challenge": "responde a outro login",
-  "proxy.bad_key": "vine_public_key em config.toml não é uma chave válida",
-  "console.proxy_detected": "Proxy {proxy} detectado: [proxy] mode em config.toml agora é \"{mode}\". A partir de agora os jogadores entram apenas pelo proxy.",
-  "console.proxy_detected_unsaved": "Proxy {proxy} detectado. Defina [proxy] mode = \"{mode}\" em config.toml.",
-  "console.proxy_needs_velocity_secret": "Um proxy Velocity está encaminhando jogadores para este servidor, mas velocity_secret em [proxy] de plugins/data/multiversion/config.toml está vazio. Coloque ali o conteúdo do arquivo forwarding.secret do Velocity e reinicie.",
-  "console.proxy_needs_vine_secret": "Um proxy está encaminhando jogadores para este servidor, mas [proxy] em plugins/data/multiversion/config.toml não tem um segredo para ele. Para o Vine, defina vine_secret com o segredo que este servidor tem na configuração do Vine; para o Velocity, defina velocity_secret. Depois reinicie.",
-  "banner.proxy_detail": "(os jogadores entram pelo proxy)"
+  "version.protocol": "protocolo {number}"
 }

@@ -75,17 +75,5 @@
   "update.console.fetch_hint": "署名付きファイルを取得するには /multiversion update download を実行してください",
   "update.console.download_failed": "アップデートのダウンロードに失敗しました：{error}",
   "update.console.nothing": "ダウンロードできる新しいバージョンはありません",
-  "version.protocol": "プロトコル {number}",
-  "kick.proxy_only": "このサーバーに直接ではなく、ネットワークのアドレスから参加してください。",
-  "console.proxy": "プロキシ",
-  "console.proxy_refused": "{proxy} が {player} を転送しましたが、このサーバーは受け入れませんでした：{reason}",
-  "proxy.bad_signature": "config.toml の [proxy] にあるものとは別のシークレットまたは鍵で署名されています",
-  "proxy.bad_data": "データがこのプラグインで読める形式ではありません",
-  "proxy.bad_challenge": "別のログインへの応答です",
-  "proxy.bad_key": "config.toml の vine_public_key は有効な鍵ではありません",
-  "console.proxy_detected": "{proxy} プロキシを検出しました：config.toml の [proxy] mode は \"{mode}\" になりました。今後、プレイヤーはプロキシ経由でのみ参加します。",
-  "console.proxy_detected_unsaved": "{proxy} プロキシを検出しました。config.toml で [proxy] mode = \"{mode}\" を設定してください。",
-  "console.proxy_needs_velocity_secret": "Velocity プロキシがこのサーバーにプレイヤーを転送していますが、plugins/data/multiversion/config.toml の [proxy] にある velocity_secret が空です。Velocity の forwarding.secret ファイルの内容を入れて再起動してください。",
-  "console.proxy_needs_vine_secret": "プロキシがこのサーバーにプレイヤーを転送していますが、plugins/data/multiversion/config.toml の [proxy] にそのシークレットがありません。Vine の場合は vine_secret に、Vine の設定でこのサーバーに付けたシークレットを入れてください。Velocity の場合は velocity_secret を設定してください。その後、再起動してください。",
-  "banner.proxy_detail": "（プレイヤーはプロキシ経由で参加）"
+  "version.protocol": "プロトコル {number}"
 }

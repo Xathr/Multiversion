@@ -75,17 +75,5 @@
   "update.console.fetch_hint": "voer /multiversion update download uit om het ondertekende bestand op te halen",
   "update.console.download_failed": "downloaden van de update mislukt: {error}",
   "update.console.nothing": "er is geen nieuwere versie om te downloaden",
-  "version.protocol": "protocol {number}",
-  "kick.proxy_only": "Kom binnen via het adres van het netwerk, niet rechtstreeks via deze server.",
-  "console.proxy": "proxy",
-  "console.proxy_refused": "{proxy} gaf {player} door, maar deze server accepteerde het niet: {reason}",
-  "proxy.bad_signature": "het is ondertekend met een ander geheim of een andere sleutel dan [proxy] in config.toml heeft",
-  "proxy.bad_data": "de gegevens hebben geen vorm die deze plugin kan lezen",
-  "proxy.bad_challenge": "het is een antwoord op een andere aanmelding",
-  "proxy.bad_key": "vine_public_key in config.toml is geen geldige sleutel",
-  "console.proxy_detected": "{proxy}-proxy gevonden: [proxy] mode in config.toml is nu \"{mode}\". Vanaf nu komen spelers alleen via de proxy binnen.",
-  "console.proxy_detected_unsaved": "{proxy}-proxy gevonden. Zet [proxy] mode = \"{mode}\" in config.toml.",
-  "console.proxy_needs_velocity_secret": "Een Velocity-proxy geeft spelers door aan deze server, maar velocity_secret onder [proxy] in plugins/data/multiversion/config.toml is leeg. Zet daar de inhoud van Velocity's bestand forwarding.secret in en herstart.",
-  "console.proxy_needs_vine_secret": "Een proxy geeft spelers door aan deze server, maar [proxy] in plugins/data/multiversion/config.toml heeft er geen geheim voor. Zet voor Vine vine_secret op het geheim dat deze server in de configuratie van Vine heeft; zet voor Velocity velocity_secret. Herstart daarna.",
-  "banner.proxy_detail": "(spelers komen via de proxy binnen)"
+  "version.protocol": "protocol {number}"
 }
