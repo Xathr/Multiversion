@@ -1,6 +1,6 @@
-# Multiversion — every 1.18+ player on one Pumpkin server
+# Multiversion — every 1.17+ player on one Pumpkin server
 
-**Multiversion** lets players on **Minecraft Java 1.18 through 26.3** join your Pumpkin server. Your friends no longer have to update, downgrade or install anything. It runs entirely inside the server as a WebAssembly plugin: **no proxy, no Java, no second process, no extra port.**
+**Multiversion** lets players on **Minecraft Java 1.17 through 26.3** join your Pumpkin server. Your friends no longer have to update, downgrade or install anything. It runs entirely inside the server as a WebAssembly plugin: **no proxy, no Java, no second process, no extra port.**
 
 > **Note:** this plugin is an independent project. It has nothing to do with [Pumpkin-MC/pumpkin-java-multiversion](https://github.com/Pumpkin-MC/pumpkin-java-multiversion) and shares no code with it.
 
@@ -20,6 +20,7 @@
 | 1.19.4, 1.19.3 | translated |
 | 1.19.1–1.19.2, 1.19 | translated, chat unsigned |
 | 1.18.2, 1.18–1.18.1 | translated, chat unsigned |
+| 1.17.1, 1.17 | translated, chat unsigned |
 
 ## Features
 
@@ -91,8 +92,9 @@ You can also change the public and backend ports, online mode, the server-list v
 - 1.20.2 and older players see 1.20.3's new blocks and mobs as similar older ones (breezes as blazes, the new tuff and copper blocks as their nearest match); crafter screens don't open for them.
 - 1.20 and 1.20.1 have no configuration step, so the plugin goes through it for them. Server resource packs are offered right after they join.
 - 1.19.3 and older have no display entities: those players see a text display as a floating name, an item display as the item itself and a block display as a floating block (blocks drawn in a special way, such as chests and signs, stay unseen). They see sniffers as ravagers and camels as donkeys, each with its real name.
+- 1.17.x players see the same world as 1.18 players; the one disc they lack ("otherside") shows as another disc.
 - 1.18.x players see what 1.19 added as something older: mud as coarse dirt, mangrove wood as other wood, sculk as dark blocks, frogs as rabbits, wardens as iron golems, allays as vexes, each with its real name.
-- 1.19, 1.19.1 and 1.19.2 sign chat in a way newer versions cannot check, and 1.18 does not sign chat at all. Their messages are sent unsigned, other players' chat reaches them as plain server messages, and they cannot chat on a server that enforces secure chat.
+- 1.19, 1.19.1 and 1.19.2 sign chat in a way newer versions cannot check, and 1.18 and older do not sign chat at all. Their messages are sent unsigned, other players' chat reaches them as plain server messages, and they cannot chat on a server that enforces secure chat.
 - Built for Pumpkin 0.2.2 (Minecraft 26.3, plugin API v0.1).
 
 ## Sources

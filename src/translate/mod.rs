@@ -23,6 +23,7 @@ pub mod data_1_20;
 pub mod data_1_19_4;
 pub mod data_1_19_3;
 pub mod data_1_19_1;
+pub mod data_1_17_1;
 pub mod data_1_18_2;
 pub mod v26_2;
 pub mod v26_1;
@@ -44,6 +45,8 @@ pub mod v1_19_1;
 pub mod v1_19;
 pub mod v1_18_2;
 pub mod v1_18;
+pub mod v1_17_1;
+pub mod v1_17;
 #[cfg(test)]
 mod fuzz_tests;
 #[cfg(test)]
@@ -216,6 +219,8 @@ fn make_step(from: Version) -> Option<Box<dyn Translator>> {
         760 => Some(Box::new(v1_19::V1_19_1To1_19::new())),
         759 => Some(Box::new(v1_18_2::V1_19To1_18_2::new())),
         758 => Some(Box::new(v1_18::V1_18_2To1_18::new())),
+        757 => Some(Box::new(v1_17_1::V1_18To1_17_1::new())),
+        756 => Some(Box::new(v1_17::V1_17_1To1_17::new())),
         _ => None,
     }
 }
