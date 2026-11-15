@@ -184,7 +184,32 @@ pub fn store_texts(folder: &str, locale: &str, texts: &[(String, String)]) -> Re
     Ok(stored)
 }
 
-/// Loads the language folder: writes the built-in files that aren't there yet, then reads every
+type Texts<T> = std::collections::BTreeMap<String, T>;
+
+/// A built-in language's file with fewer texts than this, and no record of the plugin having
+/// written it, is taken to be the admin's own partial file (the plugin's files have them all).
+const OWN_FILE_BELOW: usize = 10;
+
+/// A language file after a plugin update: texts it lacks are added, and a text that is still
+/// what the plugin wrote last time (`shipped`) takes the plugin's new wording. A text the
+/// admin changed stays. `None` when the file is already up to date.
+pub fn brought_up_to_date(have: &Texts<String>, shipped: Option<&Texts<String>>, bundled: &Texts<String>) -> Option<Texts<String>> {
+    let mut new = have.clone();
+    for (key, text) in bundled {
+        match have.get(key) {
+            None => {
+                new.insert(key.clone(), text.clone());
+            }
+            Some(current) if current != text && shipped.and_then(|s| s.get(key)) == Some(current) => {
+                new.insert(key.clone(), text.clone());
+            }
+            Some(_) => {}
+        }
+    }
+    (new != *have).then_some(new)
+}
+
+/// Loads the language folder: writes the built-in files that aren't there yet and brings the others up to date, then reads every
 /// `<locale>.json` in it over the built-in texts. Returns the catalog and what went wrong with
 /// any file (the rest still load).
 pub fn load_folder(folder: &str) -> (Catalog, Vec<String>) {
@@ -194,13 +219,35 @@ pub fn load_folder(folder: &str) -> (Catalog, Vec<String>) {
         problems.push(format!("{folder}: {e}"));
         return (catalog, problems);
     }
+    // What the plugin wrote into each built-in language's file last time, so that a text the
+    // admin never touched can follow the plugin when its wording changes.
+    let record_path = format!("{folder}/.shipped");
+    let mut record: Texts<Texts<String>> = std::fs::read_to_string(&record_path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    let record_before = record.clone();
     for (code, json) in BUNDLED {
         let path = format!("{folder}/{code}.json");
-        if !std::path::Path::new(&path).exists()
-            && let Err(e) = std::fs::write(&path, json)
-        {
+        let Ok(bundled) = serde_json::from_str::<Texts<String>>(json) else { continue };
+        let written = match std::fs::read_to_string(&path) {
+            Err(_) => std::fs::write(&path, json),
+            Ok(text) => match serde_json::from_str::<Texts<String>>(&text) {
+                // A short file with nothing on record is the admin's own: a few reworded texts
+                // over the built-in ones. It is read as it is and never written to.
+                Ok(have) if !record.contains_key(*code) && have.len() < OWN_FILE_BELOW => continue,
+                Ok(have) => match brought_up_to_date(&have, record.get(*code), &bundled) {
+                    Some(new) => std::fs::write(&path, serde_json::to_string_pretty(&new).unwrap_or_default() + "\n"),
+                    None => Ok(()),
+                },
+                // a broken file is reported below and left for the admin to mend
+                Err(_) => continue,
+            },
+        };
+        if let Err(e) = written {
             problems.push(format!("{path}: {e}"));
         }
+        record.insert(code.to_string(), bundled);
+    }
+    if record != record_before {
+        let _ = std::fs::write(&record_path, serde_json::to_string(&record).unwrap_or_default());
     }
     let Ok(entries) = std::fs::read_dir(folder) else { return (catalog, problems) };
     let mut files: Vec<std::path::PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
@@ -464,8 +511,45 @@ mod tests {
         assert_eq!(catalog.get("en_us", "kick.username_mismatch"), "Username mismatch", "what the edited file lacks is still there");
         assert_eq!(catalog.get("sv_se", "kick.internal_error"), "Internt proxyfel");
         assert!(catalog.languages().contains(&"sv_se"));
-        // an edited file is not written over
-        assert_eq!(std::fs::read_to_string(folder.join("en_us.json")).unwrap(), r#"{"kick.internal_error": "Oops"}"#);
+        // the edited text is kept; the texts the file lost are put back for the admin to see
+        let rewritten = std::fs::read_to_string(folder.join("en_us.json")).unwrap();
+        assert!(rewritten.contains("\"kick.internal_error\": \"Oops\"") && rewritten.contains("\"kick.username_mismatch\": \"Username mismatch\""), "{rewritten}");
+        // a language the plugin does not come with is the admin's alone
+        assert_eq!(std::fs::read_to_string(folder.join("sv_se.json")).unwrap(), r#"{"kick.internal_error": "Internt proxyfel"}"#);
+        let _ = std::fs::remove_dir_all(&folder);
+        // a short file that was there before the plugin ever wrote one is left as it is
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("de_de.json"), r#"{"kick.internal_error": "Hoppla"}"#).unwrap();
+        let (catalog, problems) = load_folder(path);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(catalog.get("de_de", "kick.internal_error"), "Hoppla");
+        assert_eq!(std::fs::read_to_string(folder.join("de_de.json")).unwrap(), r#"{"kick.internal_error": "Hoppla"}"#);
+        load_folder(path);
+        assert_eq!(std::fs::read_to_string(folder.join("de_de.json")).unwrap(), r#"{"kick.internal_error": "Hoppla"}"#);
+        // a full file from an older version of the plugin gets the texts added since
+        let mut old: Texts<String> = serde_json::from_str(BUNDLED.iter().find(|(c, _)| *c == "fr_fr").unwrap().1).unwrap();
+        old.remove("command.status_none");
+        old.insert("kick.internal_error".into(), "Oups".into());
+        std::fs::remove_file(folder.join(".shipped")).unwrap();
+        std::fs::write(folder.join("fr_fr.json"), serde_json::to_string(&old).unwrap()).unwrap();
+        let (catalog, _) = load_folder(path);
+        let now: Texts<String> = serde_json::from_str(&std::fs::read_to_string(folder.join("fr_fr.json")).unwrap()).unwrap();
+        assert!(now.contains_key("command.status_none"));
+        assert_eq!(now["kick.internal_error"], "Oups");
+        assert_eq!(catalog.get("fr_fr", "kick.internal_error"), "Oups");
         let _ = std::fs::remove_dir_all(&folder);
     }
+    #[test]
+    fn a_language_file_follows_the_plugin_except_where_it_was_edited() {
+        let texts = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<Texts<String>>();
+        let shipped = texts(&[("a", "old a"), ("b", "old b")]);
+        let bundled = texts(&[("a", "new a"), ("b", "new b"), ("c", "new c")]);
+        // "a" untouched, "b" reworded by the admin, "c" not there yet
+        let have = texts(&[("a", "old a"), ("b", "mine"), ("x", "own key")]);
+        assert_eq!(brought_up_to_date(&have, Some(&shipped), &bundled), Some(texts(&[("a", "new a"), ("b", "mine"), ("c", "new c"), ("x", "own key")])));
+        // with nothing on record only missing texts are added: an old text may be the admin's
+        assert_eq!(brought_up_to_date(&have, None, &bundled), Some(texts(&[("a", "old a"), ("b", "mine"), ("c", "new c"), ("x", "own key")])));
+        assert_eq!(brought_up_to_date(&bundled, Some(&bundled), &bundled), None);
+    }
+
 }

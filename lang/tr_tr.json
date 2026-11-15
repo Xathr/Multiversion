@@ -17,7 +17,7 @@
   "update.download": "İndir",
   "update.download_hover": "Market'in imzaladığı Multiversion.wasm dosyasını veri klasörüne kaydet",
   "update.click_to_run": "{command} komutunu çalıştırmak için tıklayın",
-  "command.usage": "komutlar: /multiversion update check, /multiversion update download",
+  "command.help": "komutlar: /multiversion status, /multiversion update check, /multiversion update download",
   "command.nothing_to_download": "indirilecek daha yeni bir sürüm yok; önce /multiversion update check komutunu çalıştırın",
   "command.asking": "Pumpkin Market'e soruluyor; sonuç konsola yazılır ve /multiversion update ile görülür",
   "command.busy": "zaten devam eden bir güncelleme isteği var",
@@ -75,5 +75,7 @@
   "update.console.fetch_hint": "imzalı dosyayı almak için /multiversion update download komutunu çalıştırın",
   "update.console.download_failed": "güncelleme indirilemedi: {error}",
   "update.console.nothing": "indirilecek daha yeni bir sürüm yok",
-  "version.protocol": "protokol {number}"
+  "version.protocol": "protokol {number}",
+  "command.status_none": "çevrimiçi oyuncu yok",
+  "command.status_summary": "çevrimiçi oyuncu: {players}, kullanılan sürüm: {versions}"
 }

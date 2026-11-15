@@ -378,6 +378,11 @@ pub fn tick() {
     let busy_us = (started.elapsed().as_micros() as u64).saturating_sub((proxy.reactor.waited_ns - waited) / 1000);
     crate::report::add(busy_us);
     CONNECTIONS.store(proxy.handler.conns.len(), std::sync::atomic::Ordering::Relaxed);
+    crate::status::set(
+        proxy.handler.conns.values().filter(|c| matches!(c.phase, Phase::Configuration | Phase::Play) && !c.username.is_empty())
+            .map(|c| crate::status::Online { name: c.username.clone(), protocol: c.client_version.protocol, version: c.client_version.name() })
+            .collect(),
+    );
     if proxy.reactor.stopped() {
         log::info(&crate::color::warn(&crate::i18n::console("console.proxy_stopped", &[])));
         *guard = None;

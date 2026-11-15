@@ -17,7 +17,7 @@
   "update.download": "下载",
   "update.download_hover": "将 Market 签名的 Multiversion.wasm 保存到数据文件夹",
   "update.click_to_run": "点击运行 {command}",
-  "command.usage": "命令：/multiversion update check、/multiversion update download",
+  "command.help": "命令：/multiversion status、/multiversion update check、/multiversion update download",
   "command.nothing_to_download": "没有可下载的新版本；请先运行 /multiversion update check",
   "command.asking": "正在查询 Pumpkin Market；结果会写入控制台，/multiversion update 也会显示",
   "command.busy": "已有更新请求正在进行",
@@ -75,5 +75,7 @@
   "update.console.fetch_hint": "运行 /multiversion update download 获取已签名的文件",
   "update.console.download_failed": "更新下载失败：{error}",
   "update.console.nothing": "没有可下载的新版本",
-  "version.protocol": "协议 {number}"
+  "version.protocol": "协议 {number}",
+  "command.status_none": "没有在线玩家",
+  "command.status_summary": "在线玩家：{players}，使用中的版本：{versions}"
 }

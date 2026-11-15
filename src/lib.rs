@@ -19,6 +19,7 @@ pub mod platform;
 pub mod proto;
 pub mod ratelimit;
 pub mod report;
+pub mod status;
 pub mod translate;
 pub mod update;
 
@@ -86,7 +87,7 @@ mod plugin {
                         send(&line);
                     }
                     if console {
-                        say("command.usage");
+                        say("command.help");
                     } else if let Ok(buttons) = TextComponent::from_json(&update_buttons(&locale)) {
                         sender.send_message(buttons);
                     }
@@ -99,6 +100,36 @@ mod plugin {
                         say("command.asking");
                     } else {
                         say("command.busy");
+                    }
+                }
+            }
+            Ok(1)
+        }
+    }
+
+    /// `/multiversion status`: who is online on which version.
+    struct StatusCommand;
+    impl CommandHandler for StatusCommand {
+        fn handle(&self, sender: CommandSender, _server: Server, _args: ConsumedArgs) -> Result<i32, CommandError> {
+            let console = sender.is_console();
+            let locale = match sender.as_player() {
+                Some(player) => player.get_locale(),
+                None => crate::i18n::console_language(),
+            };
+            let paint = |kind: &str, text: &str| match kind {
+                "version" => crate::color::version(text),
+                "name" => crate::color::name(text),
+                _ => crate::color::dim(text),
+            };
+            let players = crate::status::get();
+            let lines = if console { crate::status::lines(&players, &locale, &paint) } else { crate::color::with_colours(|| crate::status::lines(&players, &locale, &paint)) };
+            for line in lines {
+                if console {
+                    sender.send_message(TextComponent::text(&format!("{} {line}", crate::color::tag("[Multiversion]"))));
+                } else {
+                    match TextComponent::from_json(&crate::color::chat_json(&line)) {
+                        Ok(component) => sender.send_message(component),
+                        Err(_) => sender.send_message(TextComponent::text(&crate::color::strip(&line))),
                     }
                 }
             }
@@ -286,7 +317,7 @@ mod plugin {
                 default: PermissionDefault::Op(PermissionLevel::Three),
                 children: vec![],
             });
-            let command = Command::new(&["multiversion".to_string()], "Multiversion update status").then(
+            let command = Command::new(&["multiversion".to_string()], "Multiversion: who is on which version, and updates").then(CommandNode::literal("status").execute(StatusCommand)).then(
                 CommandNode::literal("update")
                     .then(CommandNode::literal("check").execute(UpdateCommand(Some(Job::Check))))
                     .then(CommandNode::literal("download").execute(UpdateCommand(Some(Job::Download))))

@@ -157,6 +157,17 @@ The plugin is the server's front door, so it limits what a connection can cost b
 `cargo test` includes a test that throws hundreds of thousands of malformed packets at every
 version's translators and fails on any panic, hang or oversized reply.
 
+## Who is on which version
+
+`/multiversion status` (operators and the console) lists the players online by game version:
+
+```
+[Multiversion] players online: 4, versions in use: 3
+[Multiversion] 1.21.11 (1) Alex
+[Multiversion] 1.21.4 (1) Steve
+[Multiversion] 1.18.2 (2) Ann, Bo
+```
+
 ## Proxies
 
 Multiversion is for a Pumpkin server players connect to directly. It does not work behind a
@@ -269,6 +280,9 @@ start: English, German, Spanish, French, Italian, Japanese, Korean, Dutch, Polis
 - **To reword a message**, edit it in the file. A file only has to hold the texts it changes:
   anything it leaves out comes from the built-in text, then from English.
 - A broken file is reported in the console and skipped; the others still load.
+- **After a plugin update** the files the plugin wrote are brought up to date: new texts are
+  added, and a text you never changed takes the plugin's new wording. A text you reworded is
+  kept as you wrote it.
 
 Which language a player gets:
 

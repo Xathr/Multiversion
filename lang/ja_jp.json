@@ -17,7 +17,7 @@
   "update.download": "ダウンロード",
   "update.download_hover": "Market が署名した Multiversion.wasm をデータフォルダーに保存する",
   "update.click_to_run": "クリックして {command} を実行",
-  "command.usage": "コマンド：/multiversion update check、/multiversion update download",
+  "command.help": "コマンド：/multiversion status、/multiversion update check、/multiversion update download",
   "command.nothing_to_download": "ダウンロードできる新しいバージョンはありません。先に /multiversion update check を実行してください",
   "command.asking": "Pumpkin Market に問い合わせています。結果はコンソールに記録され、/multiversion update で確認できます",
   "command.busy": "アップデートの要求はすでに実行中です",
@@ -75,5 +75,7 @@
   "update.console.fetch_hint": "署名付きファイルを取得するには /multiversion update download を実行してください",
   "update.console.download_failed": "アップデートのダウンロードに失敗しました：{error}",
   "update.console.nothing": "ダウンロードできる新しいバージョンはありません",
-  "version.protocol": "プロトコル {number}"
+  "version.protocol": "プロトコル {number}",
+  "command.status_none": "オンラインのプレイヤーはいません",
+  "command.status_summary": "オンラインのプレイヤー：{players}、使用中のバージョン：{versions}"
 }

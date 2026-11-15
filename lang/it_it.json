@@ -17,7 +17,7 @@
   "update.download": "Scarica",
   "update.download_hover": "Salva il Multiversion.wasm firmato dal Market nella cartella dei dati",
   "update.click_to_run": "Clicca per eseguire {command}",
-  "command.usage": "comandi: /multiversion update check, /multiversion update download",
+  "command.help": "comandi: /multiversion status, /multiversion update check, /multiversion update download",
   "command.nothing_to_download": "non c'è una versione più recente da scaricare; esegui prima /multiversion update check",
   "command.asking": "richiesta inviata al Pumpkin Market; il risultato è scritto nella console e /multiversion update lo mostra",
   "command.busy": "una richiesta di aggiornamento è già in corso",
@@ -75,5 +75,7 @@
   "update.console.fetch_hint": "esegui /multiversion update download per ottenere il file firmato",
   "update.console.download_failed": "download dell'aggiornamento non riuscito: {error}",
   "update.console.nothing": "non c'è una versione più recente da scaricare",
-  "version.protocol": "protocollo {number}"
+  "version.protocol": "protocollo {number}",
+  "command.status_none": "nessun giocatore online",
+  "command.status_summary": "giocatori online: {players}, versioni in uso: {versions}"
 }
