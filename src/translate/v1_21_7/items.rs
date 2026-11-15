@@ -142,7 +142,7 @@ impl Items {
     }
     fn copy_int_array(r: &mut Reader, w: &mut Writer) -> Result<()> {
         let n = Self::copy_varint(r, w)?;
-        Self::copy_bytes(r, w, n.max(0) as usize * 4)
+        Self::copy_bytes(r, w, (n.max(0) as usize).saturating_mul(4))
     }
 
     /// `Holder<T>`: varint id+1, or 0 followed by the inline value.
@@ -203,6 +203,7 @@ impl Items {
 
     /// Full item stack: count, then id + component patch when count > 0.
     pub fn item_stack(&self, r: &mut Reader, w: &mut Writer) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         let count = Self::copy_varint(r, w)?;
         if count <= 0 {
             return Ok(());
@@ -711,6 +712,7 @@ impl Items {
     }
 
     fn potion_effect_data(&self, r: &mut Reader, w: &mut Writer) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         Self::copy_varint(r, w)?; // amplifier
         Self::copy_varint(r, w)?; // duration
         Self::copy_bytes(r, w, 3)?; // ambient, particles, icon

@@ -18,6 +18,36 @@ pub enum DecodeError {
 
 pub type Result<T> = std::result::Result<T, DecodeError>;
 
+/// How many values may sit inside one another (an item in a container in an item, a list in a
+/// list in a text) before a packet is refused. The game itself nests a handful of levels; without
+/// a limit a few kilobytes of nested data from a client would exhaust the stack.
+pub const MAX_NESTING: u32 = 48;
+
+thread_local! {
+    static NESTING: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Held while reading one level of a nested value; see [`nest`].
+pub struct Nest(());
+
+impl Drop for Nest {
+    fn drop(&mut self) {
+        NESTING.with(|n| n.set(n.get().saturating_sub(1)));
+    }
+}
+
+/// Call at the top of a function that can call itself through the data it reads. Fails once
+/// [`MAX_NESTING`] levels are open.
+pub fn nest() -> Result<Nest> {
+    NESTING.with(|n| {
+        if n.get() >= MAX_NESTING {
+            return Err(DecodeError::Other("nested too deep".into()));
+        }
+        n.set(n.get() + 1);
+        Ok(Nest(()))
+    })
+}
+
 /// Cursor over a packet payload.
 pub struct Reader<'a> {
     buf: &'a [u8],
@@ -44,7 +74,8 @@ impl<'a> Reader<'a> {
         self.buf.len() - self.pos
     }
     pub fn bytes(&mut self, n: usize) -> Result<&'a [u8]> {
-        if self.pos + n > self.buf.len() {
+        // compared this way round so that an absurd `n` cannot wrap the sum on a 32-bit target
+        if n > self.buf.len() - self.pos {
             return Err(DecodeError::Eof);
         }
         let s = &self.buf[self.pos..self.pos + n];
@@ -403,4 +434,30 @@ mod tests {
         // Known offline UUID for "Notch"
         assert_eq!(uuid_to_string(offline_uuid("Notch")), "b50ad385-829d-3141-a216-7e7d7539ba7f");
     }
+    #[test]
+    fn a_length_no_packet_could_hold_is_refused_not_added_up() {
+        // On the plugin's 32-bit target `pos + n` used to wrap for lengths like these and pass
+        // the check; the slice that followed panicked.
+        let data = [1u8, 2, 3, 4];
+        for n in [usize::MAX, usize::MAX - 1, usize::MAX - 3, 5] {
+            let mut r = Reader::new(&data);
+            r.bytes(2).unwrap();
+            assert!(matches!(r.bytes(n), Err(DecodeError::Eof)), "{n}");
+            assert_eq!(r.bytes(2).unwrap(), [3, 4], "nothing was consumed");
+        }
+        assert_eq!((0x3FFF_FFFFusize).saturating_mul(4) % 4, 0);
+    }
+
+    #[test]
+    fn nesting_is_counted_and_given_back() {
+        fn dive(levels: u32) -> Result<u32> {
+            let _nest = nest()?;
+            if levels == 0 { Ok(0) } else { dive(levels - 1).map(|d| d + 1) }
+        }
+        assert_eq!(dive(MAX_NESTING - 1).unwrap(), MAX_NESTING - 1);
+        assert!(dive(MAX_NESTING).is_err());
+        // an error on the way down leaves nothing counted
+        assert_eq!(dive(MAX_NESTING - 1).unwrap(), MAX_NESTING - 1);
+    }
+
 }

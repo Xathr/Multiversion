@@ -86,7 +86,7 @@ impl Misc {
         let mut w = Writer::with_capacity(payload.len());
         w.raw(r.bytes(28)?);
         let n = Items::copy_varint(&mut r, &mut w)?;
-        w.raw(r.bytes(n.max(0) as usize * 3)?);
+        w.raw(r.bytes((n.max(0) as usize).saturating_mul(3))?);
         w.raw(r.bytes(12)?);
         Items::copy_varint(&mut r, &mut w)?;
         particle(items, &mut r, &mut w)?;

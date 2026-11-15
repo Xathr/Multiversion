@@ -107,6 +107,8 @@ pub struct Connection {
     held_clientbound: Vec<Vec<u8>>,
     status_ping_payload: Option<i64>,
     pending_status_request: bool,
+    /// The server-list reply has been sent; a connection gets one.
+    status_answered: bool,
 }
 
 pub struct Shared<'a> {
@@ -142,6 +144,7 @@ impl Connection {
             held_clientbound: Vec::new(),
             status_ping_payload: None,
             pending_status_request: false,
+            status_answered: false,
         }
     }
 
@@ -303,6 +306,11 @@ impl Connection {
     fn handle_status(&mut self, id: i32, payload: &[u8], shared: &Shared, out: &mut Vec<Action>) -> Result<(), String> {
         match id {
             ids::STATUS_S_REQUEST => {
+                // The game asks once per connection. Answering every repeat would let one
+                // connection have megabytes of replies made and queued for it.
+                if self.status_answered || self.pending_status_request {
+                    return Err("more than one status request".into());
+                }
                 // Ask the backend for its status so MOTD/favicon/player count stay Pumpkin's.
                 self.pending_status_request = true;
                 if self.phase == Phase::Status
@@ -377,6 +385,7 @@ impl Connection {
         let pkt = Packet::new(ids::STATUS_C_RESPONSE, w.into_inner());
         self.client_pkt(&pkt, out);
         self.pending_status_request = false;
+        self.status_answered = true;
         if let Some(v) = self.status_ping_payload.take() {
             let mut w = Writer::new();
             w.i64(v);

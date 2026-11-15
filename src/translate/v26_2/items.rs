@@ -311,6 +311,7 @@ impl Items {
 
     /// Full item stack: count, then id + components when count > 0.
     pub fn item_stack(&self, r: &mut Reader, w: &mut Writer) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         let count = Self::copy_varint(r, w)?;
         if count <= 0 {
             return Ok(());
@@ -376,6 +377,7 @@ impl Items {
     }
     /// Item template (26.1+): id, count, components. Used in recipes, pot decorations, containers.
     pub fn item_template(&self, r: &mut Reader, w: &mut Writer) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         let id = r.varint()?;
         w.varint(self.item(id));
         Self::copy_varint(r, w)?;
@@ -611,7 +613,7 @@ impl Items {
             }
             "custom_model_data" => {
                 let n = Self::copy_varint(r, w)?;
-                Self::copy_bytes(r, w, n.max(0) as usize * 4)?;
+                Self::copy_bytes(r, w, (n.max(0) as usize).saturating_mul(4))?;
                 let n = Self::copy_varint(r, w)?;
                 Self::copy_bytes(r, w, n.max(0) as usize)?;
                 let n = Self::copy_varint(r, w)?;
@@ -619,7 +621,7 @@ impl Items {
                     string!();
                 }
                 let n = Self::copy_varint(r, w)?;
-                Self::copy_bytes(r, w, n.max(0) as usize * 4)?;
+                Self::copy_bytes(r, w, (n.max(0) as usize).saturating_mul(4))?;
                 Ok(keep)
             }
             "tooltip_display" => {
@@ -1101,6 +1103,7 @@ impl Items {
     }
 
     fn potion_effect_data(&self, r: &mut Reader, w: &mut Writer) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         Self::copy_varint(r, w)?; // amplifier
         Self::copy_varint(r, w)?; // duration
         Self::copy_bytes(r, w, 3)?; // ambient, particles, icon
@@ -1114,7 +1117,7 @@ impl Items {
         Self::copy_varint(r, w)?;
         for _ in 0..2 {
             let n = Self::copy_varint(r, w)?;
-            Self::copy_bytes(r, w, n.max(0) as usize * 4)?;
+            Self::copy_bytes(r, w, (n.max(0) as usize).saturating_mul(4))?;
         }
         Self::copy_bytes(r, w, 2)
     }

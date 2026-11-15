@@ -79,7 +79,7 @@ pub fn explode(payload: &[u8]) -> Result<Vec<u8>> {
     let mut w = Writer::with_capacity(payload.len());
     w.raw(r.bytes(28)?); // center, power
     let n = r.varint()?;
-    let blocks = r.bytes(n.max(0) as usize * 3)?;
+    let blocks = r.bytes((n.max(0) as usize).saturating_mul(3))?;
     let knockback = r.bytes(12)?;
     // 0 keep, 1 destroy, 2 destroy with decay, 3 trigger blocks
     let destroys = matches!(r.varint()?, 1 | 2);
@@ -408,7 +408,7 @@ pub fn player_chat(payload: &[u8]) -> Result<Vec<u8>> {
     copy_opt_component(&mut r, &mut w)?; // unsigned content
     if copy_varint(&mut r, &mut w)? == 2 {
         let longs = copy_varint(&mut r, &mut w)?;
-        copy_bytes(&mut r, &mut w, longs.max(0) as usize * 8)?;
+        copy_bytes(&mut r, &mut w, (longs.max(0) as usize).saturating_mul(8))?;
     }
     copy_varint(&mut r, &mut w)?; // chat type
     copy_component(&mut r, &mut w)?; // sender name

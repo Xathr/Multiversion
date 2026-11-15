@@ -168,7 +168,7 @@ impl Misc {
         w.raw(r.bytes(28)?);
         let n = r.varint()?;
         w.varint(n);
-        w.raw(r.bytes(n.max(0) as usize * 3)?);
+        w.raw(r.bytes((n.max(0) as usize).saturating_mul(3))?);
         w.raw(r.bytes(12)?);
         w.varint(r.varint()?); // block interaction
         particle(items, &mut r, &mut w)?;

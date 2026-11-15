@@ -137,6 +137,7 @@ fn fix_item_tag(tag: &mut Tag) -> bool {
 
 /// One item stack, server → client.
 pub fn item_stack(r: &mut Reader, w: &mut Writer) -> Result<()> {
+    let _nest = crate::proto::buf::nest()?;
     if !copy_bool(r, w)? {
         return Ok(());
     }

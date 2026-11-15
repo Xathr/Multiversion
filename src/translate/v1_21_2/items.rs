@@ -129,7 +129,7 @@ impl Items {
         if n < 0 {
             return Err(err("negative list length"));
         }
-        Self::copy_bytes(r, w, n as usize * elem_bytes)
+        Self::copy_bytes(r, w, (n as usize).saturating_mul(elem_bytes))
     }
 
     /// `Holder<T>`: varint id+1, or 0 followed by the inline value.
@@ -179,6 +179,7 @@ impl Items {
 
     /// Full item stack: count, then id + component patch when count > 0.
     pub fn item_stack(&self, r: &mut Reader, w: &mut Writer) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         let count = Self::copy_varint(r, w)?;
         if count <= 0 {
             return Ok(());
@@ -560,6 +561,7 @@ impl Items {
     }
 
     fn potion_effect_data(&self, r: &mut Reader, w: &mut Writer, depth: u32) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         if depth > 64 {
             return Err(err("potion effect nesting too deep"));
         }

@@ -263,7 +263,7 @@ impl Entities {
             let start = r.position();
             r.f64()?;
             let m = r.varint()?;
-            r.bytes(m.max(0) as usize * (16 + 8 + 1))?;
+            r.bytes((m.max(0) as usize).saturating_mul((16 + 8 + 1)))?;
             let Some(key) = Items::old_attribute_key(attr, horse) else { continue };
             body.string(&key);
             body.raw(&payload[start..r.position()]);

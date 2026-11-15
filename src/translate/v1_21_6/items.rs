@@ -173,7 +173,7 @@ impl Items {
     /// Varint length + that many fixed-size elements.
     fn copy_array(r: &mut Reader, w: &mut Writer, elem: usize) -> Result<()> {
         let n = Self::copy_varint(r, w)?;
-        Self::copy_bytes(r, w, n.max(0) as usize * elem)
+        Self::copy_bytes(r, w, (n.max(0) as usize).saturating_mul(elem))
     }
 
     /// `Holder<T>`: varint id+1, or 0 followed by the inline value.
@@ -234,6 +234,7 @@ impl Items {
     /// Item stack (1.20.5 codec, also used for item templates up to 1.21.11): count, then id and
     /// the component patch when count > 0.
     pub fn item_stack(&self, r: &mut Reader, w: &mut Writer) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         let count = Self::copy_varint(r, w)?;
         if count <= 0 {
             return Ok(());
@@ -693,6 +694,7 @@ impl Items {
     }
 
     fn potion_effect_data(r: &mut Reader, w: &mut Writer) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         Self::copy_varint(r, w)?; // amplifier
         Self::copy_varint(r, w)?; // duration
         Self::copy_bytes(r, w, 3)?; // ambient, particles, icon
@@ -832,4 +834,19 @@ mod tests {
         assert_eq!(inner.varint().unwrap(), last);
         assert!(r.is_empty());
     }
+    #[test]
+    fn a_chain_of_hidden_effects_ends_in_an_error_not_a_crash() {
+        // amplifier, duration, three flags, "has a hidden effect": six bytes a level
+        let level = [0u8, 0, 0, 0, 0, 1];
+        let deep: Vec<u8> = level.iter().copied().cycle().take(6 * 200_000).collect();
+        let mut w = Writer::new();
+        assert!(Items::potion_effect_data(&mut Reader::new(&deep), &mut w).is_err());
+        // a few levels, as the game has them, pass
+        let mut few: Vec<u8> = level.iter().copied().cycle().take(6 * 3).collect();
+        few.extend([0, 0, 0, 0, 0, 0]);
+        let mut w = Writer::new();
+        Items::potion_effect_data(&mut Reader::new(&few), &mut w).unwrap();
+        assert_eq!(w.buf, few);
+    }
+
 }

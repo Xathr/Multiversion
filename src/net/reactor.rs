@@ -48,6 +48,9 @@ struct Conn {
     state: ConnState,
     pending_out: Vec<u8>,
     close_after_flush: bool,
+    /// When a connection that is closing is dropped even if the other side has not read what
+    /// is queued for it (monotonic nanoseconds).
+    close_by: Option<u64>,
     /// More was queued than `max_pending_out`; the connection is closed on the next loop turn.
     overflowed: bool,
 }
@@ -57,6 +60,11 @@ struct Conn {
 /// queue (and the plugin's memory) grow until the plugin is killed. A player joining with a large
 /// view distance has a few megabytes queued at most.
 pub const MAX_PENDING_OUT: usize = 48 * 1024 * 1024;
+
+/// How long a closing connection is given to take what is still queued for it. Nothing else
+/// counts or times such a connection any more, so one that never reads would otherwise keep its
+/// queue in memory for as long as it liked.
+pub const CLOSE_GRACE_NS: u64 = 5_000_000_000;
 
 pub struct Reactor {
     network: Network,
@@ -154,7 +162,7 @@ impl Reactor {
         socket.start_connect(&self.network, to_wasi_addr(addr)).map_err(|e| format!("connect {addr}: {}", err(e)))?;
         let token = self.next_token;
         self.next_token += 1;
-        self.conns.insert(token, Conn { socket, state: ConnState::Connecting, pending_out: Vec::new(), close_after_flush: false, overflowed: false });
+        self.conns.insert(token, Conn { socket, state: ConnState::Connecting, pending_out: Vec::new(), close_after_flush: false, close_by: None, overflowed: false });
         Ok(token)
     }
 
@@ -180,6 +188,7 @@ impl Reactor {
     pub fn close_gracefully(&mut self, token: Token) {
         if let Some(c) = self.conns.get_mut(&token) {
             c.close_after_flush = true;
+            c.close_by.get_or_insert(wasip2::clocks::monotonic_clock::now() + CLOSE_GRACE_NS);
             if c.pending_out.is_empty() {
                 self.close_now(token);
             }
@@ -332,6 +341,7 @@ impl Reactor {
                                             state: ConnState::Open { input, output },
                                             pending_out: Vec::new(),
                                             close_after_flush: false,
+                                            close_by: None,
                                             overflowed: false,
                                         });
                                         events.push(Event::Accepted { token, peer });
@@ -405,6 +415,12 @@ impl Reactor {
                     self.close_now(tok);
                     handler.handle(self, Event::Closed { token: tok, reason: "stopped reading (send queue full)".into() });
                 }
+            }
+            // Closing connections whose time is up go now, read or not.
+            let now = wasip2::clocks::monotonic_clock::now();
+            let late: Vec<Token> = self.conns.iter().filter(|(_, c)| c.close_by.is_some_and(|by| now >= by)).map(|(t, _)| *t).collect();
+            for tok in late {
+                self.close_now(tok);
             }
             // Flush everything with pending output (new data queued by the handler too).
             let tokens: Vec<Token> = self.conns.iter().filter(|(_, c)| !c.pending_out.is_empty() || c.close_after_flush).map(|(t, _)| *t).collect();

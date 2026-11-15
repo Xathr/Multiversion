@@ -135,6 +135,8 @@ impl Parser<'_> {
         }
     }
     fn value(&mut self) -> Option<Tag> {
+        // a text is lists and objects inside one another; a client chooses how deep
+        let _nest = crate::proto::buf::nest().ok()?;
         self.ws();
         match *self.s.get(self.i)? {
             b'{' => {
@@ -367,4 +369,15 @@ mod tests {
         assert_eq!(c.get("Count"), Some(&Tag::Byte(3)));
         assert!(c.get("components").is_none() && c.get("count").is_none());
     }
+    #[test]
+    fn deeply_nested_text_is_kept_as_plain_text() {
+        // tens of thousands of brackets from a client used to be tens of thousands of calls deep
+        let deep = "[".repeat(60_000);
+        assert_eq!(from_json(&deep), Tag::String(deep.clone()));
+        let closed = format!("{}\"x\"{}", "[".repeat(200), "]".repeat(200));
+        assert_eq!(from_json(&closed), Tag::String(closed.clone()));
+        // ordinary nesting still parses, and the count was given back
+        assert!(matches!(from_json("[[\"a\"],{\"text\":\"b\",\"extra\":[\"c\"]}]"), Tag::List(_)));
+    }
+
 }

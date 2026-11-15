@@ -308,6 +308,7 @@ impl Items {
 
     /// Full item stack: count, then id + component patch when count > 0.
     pub fn item_stack(&self, r: &mut Reader, w: &mut Writer) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         let count = Self::copy_varint(r, w)?;
         if count <= 0 {
             return Ok(());
@@ -1032,14 +1033,19 @@ impl Items {
                 };
                 if let Some(Tag::Compound(comps)) = b.get("c") {
                     for (name, value) in comps {
-                        if let (Some(static_name), Tag::ByteArray(raw)) = (Self::new_component_name(name), value) {
+                        // once per component: a client could list one a hundred thousand times
+                        if let (Some(static_name), Tag::ByteArray(raw)) = (Self::new_component_name(name), value)
+                            && !restore.comps.iter().any(|(n, _)| *n == static_name)
+                        {
                             restore.comps.push((static_name, raw.iter().map(|b| *b as u8).collect()));
                         }
                     }
                 }
                 if let Some(Tag::List(list)) = b.get("r") {
                     for name in list.iter().filter_map(Tag::as_str) {
-                        if let Some(static_name) = Self::new_component_name(name) {
+                        if let Some(static_name) = Self::new_component_name(name)
+                            && !restore.removed.contains(&static_name)
+                        {
                             restore.removed.push(static_name);
                         }
                     }
@@ -1092,6 +1098,7 @@ impl Items {
     }
 
     fn potion_effect_data(&self, r: &mut Reader, w: &mut Writer) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         Self::copy_varint(r, w)?; // amplifier
         Self::copy_varint(r, w)?; // duration
         Self::copy_bytes(r, w, 3)?; // ambient, particles, icon
@@ -1105,7 +1112,7 @@ impl Items {
         Self::copy_varint(r, w)?;
         for _ in 0..2 {
             let n = Self::copy_varint(r, w)?;
-            Self::copy_bytes(r, w, n.max(0) as usize * 4)?;
+            Self::copy_bytes(r, w, (n.max(0) as usize).saturating_mul(4))?;
         }
         Self::copy_bytes(r, w, 2)
     }

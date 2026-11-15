@@ -75,7 +75,7 @@ pub fn copy_opt_string(r: &mut Reader, w: &mut Writer) -> Result<()> {
 }
 fn copy_int_list(r: &mut Reader, w: &mut Writer, elem_size: usize) -> Result<()> {
     let n = copy_varint(r, w)?;
-    copy_bytes(r, w, n.max(0) as usize * elem_size)
+    copy_bytes(r, w, (n.max(0) as usize).saturating_mul(elem_size))
 }
 
 pub struct Items {
@@ -224,6 +224,7 @@ impl Items {
 
     /// Full item stack: count, then id + component patch when count > 0.
     pub fn item_stack(&self, r: &mut Reader, w: &mut Writer) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         self.item_stack_with(r, w, false)
     }
     /// Serverbound creative-slot stacks carry a byte length before every component value.
@@ -231,6 +232,7 @@ impl Items {
         self.item_stack_with(r, w, true)
     }
     fn item_stack_with(&self, r: &mut Reader, w: &mut Writer, length_prefixed: bool) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         let count = copy_varint(r, w)?;
         if count <= 0 {
             return Ok(());
@@ -706,6 +708,7 @@ impl Items {
     }
 
     fn potion_effect_data(r: &mut Reader, w: &mut Writer) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         copy_varint(r, w)?; // amplifier
         copy_varint(r, w)?; // duration
         copy_bytes(r, w, 3)?; // ambient, particles, icon

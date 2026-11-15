@@ -1101,10 +1101,16 @@ impl Items {
     }
 
     /// A nested 1.20.3 item (`{id, Count, tag}`) as 1.20.5 stack bytes.
-    fn nested_from_tag(&self, t: &Tag, w: &mut Writer) {
+    fn nested_from_tag(&self, mut t: Tag, w: &mut Writer) {
+        // Items can hold items that hold items: past the limit the slot is sent empty. The
+        // item's data is taken out of it, not copied, so a deep stack is not held many times over.
+        let Ok(_nest) = crate::proto::buf::nest() else {
+            w.varint(0);
+            return;
+        };
         let id = t.get("id").and_then(Tag::as_str).and_then(|k| position(&d::OLD_ITEM_NAMES, k)).unwrap_or(0);
         let count = t.get("Count").and_then(Tag::as_i32).unwrap_or(0);
-        self.write_server_stack(id, count, t.get("tag").cloned(), w);
+        self.write_server_stack(id, count, t.remove("tag"), w);
     }
 
     /// 1.20.3 item (id and NBT) → 1.20.5 id and components, sorted by component id. What has no
@@ -1251,7 +1257,7 @@ impl Items {
                 take_i32(&mut tag, "Charged");
                 let mut w = Writer::new();
                 w.varint(list.len() as i32);
-                for t in &list {
+                for t in list {
                     self.nested_from_tag(t, &mut w);
                 }
                 push!("charged_projectiles", w);
@@ -1261,7 +1267,7 @@ impl Items {
             if let Some(list) = take_list(&mut tag, "Items") {
                 let mut w = Writer::new();
                 w.varint(list.len() as i32);
-                for t in &list {
+                for t in list {
                     self.nested_from_tag(t, &mut w);
                 }
                 push!("bundle_contents", w);
@@ -1476,14 +1482,22 @@ impl Items {
                 push!("base_color", w);
             }
             if let Some(items) = take_list(&mut be, "Items") {
-                let mut slots: Vec<(usize, &Tag)> = items.iter().filter_map(|t| Some((usize::try_from(t.get("Slot")?.as_i32()?).ok()?, t))).filter(|(s, _)| *s < 256).collect();
-                slots.sort_by_key(|(s, _)| *s);
-                let len = slots.last().map_or(0, |(s, _)| s + 1);
+                // by slot; the first item that names a slot has it
+                let mut slots: Vec<Option<Tag>> = Vec::new();
+                for t in items {
+                    let Some(slot) = t.get("Slot").and_then(Tag::as_i32).and_then(|s| usize::try_from(s).ok()).filter(|s| *s < 256) else { continue };
+                    if slots.len() <= slot {
+                        slots.resize_with(slot + 1, || None);
+                    }
+                    if slots[slot].is_none() {
+                        slots[slot] = Some(t);
+                    }
+                }
                 let mut w = Writer::new();
-                w.varint(len as i32);
-                for i in 0..len {
-                    match slots.iter().find(|(s, _)| *s == i) {
-                        Some((_, t)) => self.nested_from_tag(t, &mut w),
+                w.varint(slots.len() as i32);
+                for slot in slots {
+                    match slot {
+                        Some(t) => self.nested_from_tag(t, &mut w),
                         None => {
                             w.varint(0);
                         }

@@ -265,12 +265,14 @@ impl Items {
 
     /// Full item stack (count, then id + component patch when count > 0).
     pub fn item_stack(&self, r: &mut Reader, w: &mut Writer) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         self.item_stack_tracked(r, w, None)
     }
 
     /// Like [`item_stack`]; with `regs`, the server's component hashes are stored on the item so
     /// a later container click can report them (inventory packets only).
     pub fn item_stack_tracked(&self, r: &mut Reader, w: &mut Writer, regs: Option<&Registries>) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         let count = Self::copy_varint(r, w)?;
         if count <= 0 {
             return Ok(());
@@ -659,7 +661,7 @@ impl Items {
             }
             "custom_model_data" => {
                 let n = Self::copy_varint(r, w)?;
-                Self::copy_bytes(r, w, n.max(0) as usize * 4)?;
+                Self::copy_bytes(r, w, (n.max(0) as usize).saturating_mul(4))?;
                 let n = Self::copy_varint(r, w)?;
                 Self::copy_bytes(r, w, n.max(0) as usize)?;
                 let n = Self::copy_varint(r, w)?;
@@ -667,7 +669,7 @@ impl Items {
                     string!();
                 }
                 let n = Self::copy_varint(r, w)?;
-                Self::copy_bytes(r, w, n.max(0) as usize * 4)?;
+                Self::copy_bytes(r, w, (n.max(0) as usize).saturating_mul(4))?;
                 Ok(Kind::Keep)
             }
             "tooltip_display" => {
@@ -1077,6 +1079,7 @@ impl Items {
     }
 
     fn potion_effect_data(r: &mut Reader, w: &mut Writer) -> Result<()> {
+        let _nest = crate::proto::buf::nest()?;
         Self::copy_varint(r, w)?;
         Self::copy_varint(r, w)?;
         Self::copy_bytes(r, w, 3)?;
@@ -1090,7 +1093,7 @@ impl Items {
         Self::copy_varint(r, w)?;
         for _ in 0..2 {
             let n = Self::copy_varint(r, w)?;
-            Self::copy_bytes(r, w, n.max(0) as usize * 4)?;
+            Self::copy_bytes(r, w, (n.max(0) as usize).saturating_mul(4))?;
         }
         Self::copy_bytes(r, w, 2)
     }
@@ -1313,6 +1316,7 @@ fn filterable_hv(r: &mut Reader, value: impl Fn(&mut Reader) -> Option<Hv>) -> O
 }
 
 fn potion_effect_data_hv(r: &mut Reader) -> Option<Vec<(Hv, Hv)>> {
+    let _nest = crate::proto::buf::nest().ok()?;
     let amplifier = r.varint().ok()?;
     let duration = r.varint().ok()?;
     let ambient = r.bool().ok()?;
