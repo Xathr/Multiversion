@@ -31,7 +31,7 @@
 - 🧱 **Sensible stand-ins**: blocks, items and mobs an older client doesn't have appear as their closest match
 - 🖥️ **Clear startup banner**: the supported versions, ports and login mode at a glance, and every console line tagged `[Multiversion]`
 - 🛡️ **Built-in protection**: oversized packets before login are refused, idle logins time out, one address can only hold a few connections that are still logging in and open a limited number per 10 seconds, and malformed data is refused before it can use up memory
-- 📊 **Who is on which version**: `/multiversion status` lists the players online by game version
+- 📊 **Who is on which version**: `/multiversion status` lists the players online by game version, in the console or in game
 - 🔔 **Update check**: tells the console and operators when a newer version is on the Market, and `/multiversion update download` fetches the signed file after checking its signature
 - ⚡ **Light on the CPU and memory**: chunks are translated about four times faster than in 0.5.0, its own fast connection encryption (about 3.6 times quicker than before), server-list pings answered from a one-second cache, compression memory only for connections that need it, and Pumpkin's link to the plugin can skip compression
 - 🌍 **13 languages, and yours**: every message, in game and in the console, comes from a language file (English, German, Spanish, French, Italian, Japanese, Korean, Dutch, Polish, Portuguese, Russian, Turkish, Chinese). Add a language by dropping a file in the `lang` folder, with no code or config change
@@ -39,6 +39,8 @@
 - 🪶 **Self-contained**: one `.wasm` file (about 2.8 MB) and one config file
 
 ![Console](https://raw.githubusercontent.com/Xathr/Multiversion/main/market/screenshot-console.png)
+
+![Who is on which version](https://raw.githubusercontent.com/Xathr/Multiversion/main/market/screenshot-status.png)
 
 ## Setup
 
@@ -53,6 +55,8 @@ It is the same on Linux and Windows. Players keep connecting to port 25565 as be
 `plugins/data/multiversion/config.toml`:
 
 ```toml
+language = "auto"             # console and kick messages: "auto" (English) or e.g. "de_de"
+
 [backend]
 pumpkin_compression = false   # true keeps Pumpkin compressing its local link (costs CPU)
 
@@ -72,7 +76,7 @@ download = false              # download a newer, signed Multiversion.wasm at st
 
 ![Version filter](https://raw.githubusercontent.com/Xathr/Multiversion/main/market/screenshot-config.png)
 
-You can also change the public and backend ports, online mode, the server-list version text, the kick message, compression and connection limits.
+You can also change the public and backend ports, online mode, the server-list version text, compression and connection limits. Every message can be reworded in the files under `plugins/data/multiversion/lang/`.
 
 ## Permissions it asks for
 

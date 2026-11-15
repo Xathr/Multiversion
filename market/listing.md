@@ -11,7 +11,7 @@ Copy each field into the Store Listing form at market.pumpkinmc.org.
 | Version | 0.6.0 |
 | Binary | `Multiversion.wasm` from the latest release of this repository (about 2.8 MB, under the 5 MB limit) |
 | Icon | `logo.png` (512×512) |
-| Screenshots | `screenshot-versions.png`, `screenshot-console.png`, `screenshot-config.png` (1600×900 each) |
+| Screenshots | `screenshot-versions.png`, `screenshot-console.png`, `screenshot-status.png`, `screenshot-config.png` (1600×900 each) |
 | Source link | https://github.com/Xathr/Multiversion |
 | Sources / credits | [ViaVersion](https://github.com/ViaVersion/ViaVersion), [ViaBackwards](https://github.com/ViaVersion/ViaBackwards), [ViaVersion Mappings](https://github.com/ViaVersion/Mappings) (GPL-3.0), [minecraft-data](https://github.com/PrismarineJS/minecraft-data) |
 | Keywords | multiversion, protocol, version, compatibility, 1.17, 1.17.1, 1.18, 1.18.2, 1.19, 1.19.2, 1.19.4, 1.20, 1.20.1, 1.20.2, 1.20.4, 1.20.6, 1.21, 26.3, cross-version, viaversion, backwards |
@@ -21,6 +21,7 @@ Copy each field into the Store Listing form at market.pumpkinmc.org.
 
 | Name | Aliases | Permission | Description |
 |---|---|---|---|
+| `multiversion status` | | `multiversion:update` | Lists the players online by game version |
 | `multiversion update` | | `multiversion:update` | Shows whether a newer Multiversion version is on the Pumpkin Market |
 | `multiversion update check` | | `multiversion:update` | Asks the Pumpkin Market for the latest version now |
 | `multiversion update download` | | `multiversion:update` | Downloads the Market-signed Multiversion.wasm into plugins/data/multiversion/update |
