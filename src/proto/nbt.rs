@@ -284,9 +284,66 @@ pub fn read_named_optional(r: &mut Reader) -> Result<Option<Tag>> {
     read_payload(r, ty, 0, &mut MAX_TAGS.clone()).map(Some)
 }
 
-/// Skips over one network NBT value without building it.
+/// Skips over one network NBT value without building it: nothing is allocated, the reader only
+/// moves past the value. It accepts exactly what [`read`] accepts.
 pub fn skip(r: &mut Reader) -> Result<()> {
-    read(r).map(|_| ())
+    let ty = r.u8()?;
+    skip_payload(r, ty, 0)
+}
+
+/// Skips 1.20.1-style NBT (named root); an End tag is a value of its own.
+pub fn skip_named_optional(r: &mut Reader) -> Result<()> {
+    let ty = r.u8()?;
+    if ty == 0 {
+        return Ok(());
+    }
+    skip_string(r)?;
+    skip_payload(r, ty, 0)
+}
+
+fn skip_string(r: &mut Reader) -> Result<()> {
+    let len = r.u16()? as usize;
+    r.bytes(len).map(|_| ())
+}
+
+fn skip_payload(r: &mut Reader, ty: u8, depth: u32) -> Result<()> {
+    if depth > MAX_DEPTH {
+        return Err(DecodeError::Other("nbt too deep".into()));
+    }
+    let size = match ty {
+        0 => 0,
+        1 => 1,
+        2 => 2,
+        3 | 5 => 4,
+        4 | 6 => 8,
+        7 => r.i32()?.max(0) as usize,
+        8 => return skip_string(r),
+        9 => {
+            let elem = r.u8()?;
+            let len = r.i32()?.max(0) as usize;
+            if len > r.len() || (elem == 0 && len > 0) {
+                return Err(DecodeError::Other("nbt list longer than the packet".into()));
+            }
+            for _ in 0..len {
+                skip_payload(r, elem, depth + 1)?;
+            }
+            return Ok(());
+        }
+        10 => {
+            loop {
+                let t = r.u8()?;
+                if t == 0 {
+                    return Ok(());
+                }
+                skip_string(r)?;
+                skip_payload(r, t, depth + 1)?;
+            }
+        }
+        11 => (r.i32()?.max(0) as usize).saturating_mul(4),
+        12 => (r.i32()?.max(0) as usize).saturating_mul(8),
+        other => return Err(DecodeError::Other(format!("unknown nbt tag type {other}"))),
+    };
+    r.bytes(size).map(|_| ())
 }
 
 #[cfg(test)]
@@ -355,4 +412,43 @@ mod tests {
         assert_eq!(end.buf, [0]);
         assert_eq!(read_named_optional(&mut Reader::new(&[0])).unwrap(), None);
     }
+    #[test]
+    fn skip_moves_exactly_as_far_as_read() {
+        let mut inner = Tag::compound();
+        inner.insert("name", Tag::String("sign".into()));
+        inner.insert("lines", Tag::List(vec![Tag::String("a".into()), Tag::String("bb".into())]));
+        inner.insert("longs", Tag::LongArray(vec![1, -2, 3]));
+        inner.insert("ints", Tag::IntArray(vec![7, 8]));
+        inner.insert("bytes", Tag::ByteArray(vec![1, 2, 3, 4, 5]));
+        let mut root = Tag::compound();
+        root.insert("b", Tag::Byte(1));
+        root.insert("s", Tag::Short(2));
+        root.insert("i", Tag::Int(3));
+        root.insert("l", Tag::Long(4));
+        root.insert("f", Tag::Float(5.0));
+        root.insert("d", Tag::Double(6.0));
+        root.insert("empty", Tag::List(Vec::new()));
+        root.insert("nested", Tag::List(vec![inner.clone(), inner]));
+        for named in [false, true] {
+            let mut w = Writer::new();
+            if named { write_named(&mut w, &root) } else { write(&mut w, &root) }
+            w.u8(0xAB); // what follows the value
+            let skipper = if named { skip_named_optional } else { skip };
+            let mut r = Reader::new(&w.buf);
+            skipper(&mut r).unwrap();
+            assert_eq!(r.remaining(), [0xAB], "named: {named}");
+            // cut off anywhere inside the value, both refuse it
+            for end in 0..w.buf.len() - 1 {
+                assert!(skipper(&mut Reader::new(&w.buf[..end])).is_err(), "named {named}, cut at {end}");
+            }
+        }
+        // the same limits as read: a list of nothing, a list longer than the packet, too deep
+        assert!(skip(&mut Reader::new(&[9, 0, 0, 0, 0, 5])).is_err());
+        assert!(skip(&mut Reader::new(&[9, 1, 0x7f, 0xff, 0xff, 0xff])).is_err());
+        let deep: Vec<u8> = std::iter::once(9u8).chain([9u8, 0, 0, 0, 1].iter().copied().cycle().take(5 * 600)).collect();
+        assert!(skip(&mut Reader::new(&deep)).is_err());
+        assert!(skip(&mut Reader::new(&[0])).is_ok());
+        assert!(skip(&mut Reader::new(&[13])).is_err());
+    }
+
 }

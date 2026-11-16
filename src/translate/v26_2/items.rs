@@ -199,8 +199,8 @@ impl Items {
         names.get(usize::try_from(id).ok()?).copied()
     }
     fn target_component_id(&self, name: &str) -> Option<i32> {
-        let names: &[&str] = if self.dir == Dir::ToClient { &d::OLD_COMPONENT_NAMES } else { &d::NEW_COMPONENT_NAMES };
-        names.iter().position(|n| *n == name).map(|i| i as i32)
+        let names: &'static [&'static str] = if self.dir == Dir::ToClient { &d::OLD_COMPONENT_NAMES } else { &d::NEW_COMPONENT_NAMES };
+        crate::translate::table::position(names, name)
     }
     fn reg_id(&self, reg: Reg, id: i32) -> i32 {
         match reg {

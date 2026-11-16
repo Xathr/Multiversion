@@ -214,10 +214,18 @@ impl Recipes {
         if r.bool()? {
             self.recipes.clear();
         }
-        for recipe in added {
-            self.recipes.retain(|x| x.index != recipe.index);
-            self.recipes.push(recipe);
+        // The new ones replace what is known under the same number; the last of two with one
+        // number wins. One pass over each list, however many arrive at once.
+        let mut numbers = std::collections::HashSet::with_capacity(added.len());
+        let mut newest: Vec<Recipe> = Vec::with_capacity(added.len());
+        for recipe in added.into_iter().rev() {
+            if numbers.insert(recipe.index) {
+                newest.push(recipe);
+            }
         }
+        newest.reverse();
+        self.recipes.retain(|x| !numbers.contains(&x.index));
+        self.recipes.extend(newest);
         self.send(out);
         Ok(())
     }

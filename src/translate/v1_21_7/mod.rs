@@ -30,7 +30,7 @@ impl V1_21_9To1_21_7 {
         Self { to_client: Items::new(Dir::ToClient), to_server: Items::new(Dir::ToServer), entities: Entities::default(), misc: Misc::new() }
     }
 
-    fn play_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let items = &self.to_client;
         let p = &pkt.payload[..];
         let e = |e: crate::proto::buf::DecodeError| format!("clientbound 0x{:02x}: {e}", pkt.id);
@@ -91,11 +91,11 @@ impl V1_21_9To1_21_7 {
         let Some(mapped) = ids::play_clientbound(pkt.id) else {
             return Err(format!("no 1.21.7 equivalent for clientbound play packet 0x{:02x}", pkt.id));
         };
-        out.push(Packet::new(mapped, translated.unwrap_or_else(|| pkt.payload.clone())));
+        out.push(Packet::new(mapped, translated.unwrap_or_else(|| std::mem::take(&mut pkt.payload))));
         Ok(())
     }
 
-    fn config_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn config_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let e = |e: crate::proto::buf::DecodeError| format!("config 0x{:02x}: {e}", pkt.id);
         let payload = match pkt.id {
             new::CONFIG_REGISTRY_DATA => {
@@ -112,14 +112,14 @@ impl V1_21_9To1_21_7 {
                 out.push(Packet::new(SHOW_DIALOG, self.misc.code_of_conduct_dialog(&pkt.payload).map_err(e)?));
                 return Ok(());
             }
-            _ => pkt.payload.clone(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         let mapped = ids::config_clientbound(pkt.id).ok_or_else(|| format!("no 1.21.7 config packet for 0x{:02x}", pkt.id))?;
         out.push(Packet::new(mapped, payload));
         Ok(())
     }
 
-    fn play_serverbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_serverbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let e = |e: crate::proto::buf::DecodeError| format!("serverbound 0x{:02x}: {e}", pkt.id);
         let items = &self.to_server;
         let p = &pkt.payload[..];
@@ -138,21 +138,21 @@ impl V1_21_9To1_21_7 {
                 Some(v) => v,
                 None => return Ok(()),
             },
-            _ => pkt.payload.clone(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         let mapped = ids::play_serverbound(pkt.id).ok_or_else(|| format!("unknown serverbound play packet 0x{:02x}", pkt.id))?;
         out.push(Packet::new(mapped, payload));
         Ok(())
     }
 
-    fn config_serverbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn config_serverbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         const CUSTOM_CLICK_ACTION: i32 = 8;
         if pkt.id == CUSTOM_CLICK_ACTION && self.misc.is_code_of_conduct_ack(&pkt.payload) {
             out.push(Packet::new(new::S_CONFIG_ACCEPT_CODE_OF_CONDUCT, Vec::new()));
             return Ok(());
         }
         let mapped = ids::config_serverbound(pkt.id).ok_or_else(|| format!("unknown serverbound config packet 0x{:02x}", pkt.id))?;
-        out.push(Packet::new(mapped, pkt.payload.clone()));
+        out.push(Packet::new(mapped, std::mem::take(&mut pkt.payload)));
         Ok(())
     }
 }
@@ -170,13 +170,13 @@ impl Translator for V1_21_9To1_21_7 {
     fn to(&self) -> Version {
         Version { protocol: 772 }
     }
-    fn clientbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn clientbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_clientbound(pkt, out),
             State::Configuration => self.config_clientbound(pkt, out),
         }
     }
-    fn serverbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn serverbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_serverbound(pkt, out),
             State::Configuration => self.config_serverbound(pkt, out),

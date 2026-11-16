@@ -86,9 +86,9 @@ pub trait Translator {
     fn from(&self) -> Version;
     fn to(&self) -> Version;
     /// Server → client: input is a `from`-version packet, output `to`-version packets (0..n).
-    fn clientbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult;
+    fn clientbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult;
     /// Client → server: input is a `to`-version packet, output `from`-version packets (0..n).
-    fn serverbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult;
+    fn serverbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult;
     /// Packets this step sends to the server by itself, on the client's behalf (`from`-version
     /// packets, each with the state it is sent in). The chain collects them after every call.
     fn take_replies(&mut self) -> Vec<(State, Packet)> {
@@ -135,7 +135,7 @@ impl Chain {
         let mut current = vec![pkt];
         for i in 0..self.steps.len() {
             let mut next = Vec::with_capacity(current.len());
-            for p in &current {
+            for p in &mut current {
                 self.steps[i].clientbound(state, p, &mut next)?;
             }
             current = next;
@@ -148,7 +148,7 @@ impl Chain {
         let mut current = vec![pkt];
         for step in self.steps.iter_mut().rev() {
             let mut next = Vec::with_capacity(current.len());
-            for p in &current {
+            for p in &mut current {
                 step.serverbound(state, p, &mut next)?;
             }
             current = next;
@@ -162,7 +162,7 @@ impl Chain {
             let mut current = vec![pkt];
             for step in self.steps[..i].iter_mut().rev() {
                 let mut next = Vec::with_capacity(current.len());
-                for p in &current {
+                for p in &mut current {
                     step.serverbound(state, p, &mut next)?;
                 }
                 current = next;
@@ -296,11 +296,11 @@ mod chain_tests {
         fn to(&self) -> Version {
             Version { protocol: 764 }
         }
-        fn clientbound(&mut self, _: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
-            out.push(pkt.clone());
+        fn clientbound(&mut self, _: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
+            out.push(Packet::new(pkt.id, std::mem::take(&mut pkt.payload)));
             Ok(())
         }
-        fn serverbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+        fn serverbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
             let shift = if state == State::Play { 100 } else { 200 };
             out.push(Packet::new(pkt.id + shift, pkt.payload.clone()));
             Ok(())

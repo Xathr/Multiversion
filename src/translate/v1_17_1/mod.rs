@@ -91,7 +91,7 @@ fn sound_id(id: i32) -> i32 {
 }
 
 fn nbt_copy(r: &mut Reader, w: &mut Writer) -> Result<()> {
-    r.copy_to(w, |r| nbt::read_named_optional(r).map(|_| ()))
+    r.copy_to(w, |r| nbt::skip_named_optional(r))
 }
 
 fn varint_copy(r: &mut Reader, w: &mut Writer) -> Result<i32> {
@@ -801,7 +801,7 @@ impl V1_18To1_17_1 {
         Self::default()
     }
 
-    fn play_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let p = &pkt.payload[..];
         let e = |e: DecodeError| format!("clientbound 0x{:02x}: {e}", pkt.id);
         // the same packets in the same order, less one
@@ -839,20 +839,20 @@ impl V1_18To1_17_1 {
             UPDATE_ADVANCEMENTS => update_advancements(p).map_err(e)?,
             UPDATE_RECIPES => update_recipes(p).map_err(e)?,
             UPDATE_TAGS => update_tags(p).map_err(e)?,
-            _ => p.to_vec(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         out.push(Packet::new(id, payload));
         Ok(())
     }
 
-    fn play_serverbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_serverbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let p = &pkt.payload[..];
         let e = |e: DecodeError| format!("serverbound 0x{:02x}: {e}", pkt.id);
         let payload = match pkt.id {
             CLIENT_INFORMATION => client_information(p),
             CONTAINER_CLICK => container_click(p).map_err(e)?,
             SET_CREATIVE_MODE_SLOT => set_creative_slot(p).map_err(e)?,
-            _ => p.to_vec(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         out.push(Packet::new(pkt.id, payload));
         Ok(())
@@ -866,21 +866,21 @@ impl Translator for V1_18To1_17_1 {
     fn to(&self) -> Version {
         Version { protocol: 756 }
     }
-    fn clientbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn clientbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_clientbound(pkt, out),
             // neither version has a configuration phase: a newer step stands in for it
             State::Configuration => {
-                out.push(pkt.clone());
+                out.push(Packet::new(pkt.id, std::mem::take(&mut pkt.payload)));
                 Ok(())
             }
         }
     }
-    fn serverbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn serverbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_serverbound(pkt, out),
             State::Configuration => {
-                out.push(pkt.clone());
+                out.push(Packet::new(pkt.id, std::mem::take(&mut pkt.payload)));
                 Ok(())
             }
         }
@@ -897,7 +897,7 @@ mod tests {
 
     fn clientbound(step: &mut V1_18To1_17_1, id: i32, payload: Vec<u8>) -> Vec<Packet> {
         let mut out = Vec::new();
-        step.clientbound(State::Play, &Packet::new(id, payload), &mut out).unwrap();
+        step.clientbound(State::Play, &mut Packet::new(id, payload), &mut out).unwrap();
         out
     }
 
@@ -923,7 +923,7 @@ mod tests {
         stack(&mut w, 1028);
         w.bool(false);
         let mut sent = Vec::new();
-        step.serverbound(State::Play, &Packet::new(CONTAINER_CLICK, w.into_inner()), &mut sent).unwrap();
+        step.serverbound(State::Play, &mut Packet::new(CONTAINER_CLICK, w.into_inner()), &mut sent).unwrap();
         let mut want = Writer::new();
         want.u8(0).varint(7).i16(36).i8(0).varint(0).varint(1).i16(36);
         stack(&mut want, 1029);
@@ -940,7 +940,7 @@ mod tests {
         assert_eq!(clientbound(&mut step, 0x30, vec![1, 2])[0].id, 0x30);
         // the client's settings gain the server-list answer
         let mut sent = Vec::new();
-        step.serverbound(State::Play, &Packet::new(CLIENT_INFORMATION, vec![5, 5]), &mut sent).unwrap();
+        step.serverbound(State::Play, &mut Packet::new(CLIENT_INFORMATION, vec![5, 5]), &mut sent).unwrap();
         assert_eq!(sent[0].payload, [5, 5, 1]);
     }
 

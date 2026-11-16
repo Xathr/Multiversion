@@ -55,12 +55,18 @@ impl V26_3To26_2 {
         // An item inside a repaired list can need repair itself (a crossbow in a bundle): go
         // round again until nothing is left to correct.
         for round in 0..4 {
-            let current = Packet::new(pkt.id, payload.clone().unwrap_or_else(|| pkt.payload.clone()));
+            let mut current = Packet::new(pkt.id, payload.clone().unwrap_or_else(|| pkt.payload.clone()));
+            let length = current.payload.len();
             self.to_client.take_repairs();
             // Only the corrections are wanted; the 26.2 packet this produces is thrown away, and
-            // a packet this step cannot read is left for the client to judge.
-            let read = self.play_clientbound(&current, &mut Vec::new());
+            // a packet this step cannot read is left for the client to judge. The corrections
+            // say where in `current` they belong, so it is `current` itself that is read.
+            let read = self.play_clientbound(&mut current, &mut Vec::new());
             let mut repairs = self.to_client.take_repairs();
+            if current.payload.len() != length {
+                // handed on without being read: nothing in it was looked at, nothing to correct
+                break;
+            }
             if let Err(why) = &read
                 && carries_items
                 && pkt.id != new::SET_ENTITY_DATA
@@ -92,7 +98,7 @@ impl V26_3To26_2 {
         payload
     }
 
-    fn play_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let items = &self.to_client;
         let p = &pkt.payload[..];
         let e = |e: crate::proto::buf::DecodeError| format!("clientbound 0x{:02x}: {e}", pkt.id);
@@ -176,11 +182,11 @@ impl V26_3To26_2 {
         let Some(mapped) = ids::play_clientbound(pkt.id) else {
             return Err(format!("no 26.2 equivalent for clientbound play packet 0x{:02x}", pkt.id));
         };
-        out.push(Packet::new(mapped, translated.unwrap_or_else(|| pkt.payload.clone())));
+        out.push(Packet::new(mapped, translated.unwrap_or_else(|| std::mem::take(&mut pkt.payload))));
         Ok(())
     }
 
-    fn config_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn config_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let e = |e: crate::proto::buf::DecodeError| format!("config 0x{:02x}: {e}", pkt.id);
         let payload = match pkt.id {
             new::CONFIG_REGISTRY_DATA => match World::registry_data(&self.to_client, &pkt.payload).map_err(e)? {
@@ -189,14 +195,14 @@ impl V26_3To26_2 {
             },
             new::CONFIG_UPDATE_TAGS => World::update_tags(&self.to_client, &pkt.payload).map_err(e)?,
             new::CONFIG_POST_EFFECTS => return Ok(()),
-            _ => pkt.payload.clone(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         let mapped = ids::config_clientbound(pkt.id).ok_or_else(|| format!("no 26.2 config packet for 0x{:02x}", pkt.id))?;
         out.push(Packet::new(mapped, payload));
         Ok(())
     }
 
-    fn play_serverbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_serverbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let e = |e: crate::proto::buf::DecodeError| format!("serverbound 0x{:02x}: {e}", pkt.id);
         let items = &self.to_server;
         let p = &pkt.payload[..];
@@ -249,7 +255,7 @@ impl V26_3To26_2 {
             }
             _ => {
                 let mapped = ids::play_serverbound(pkt.id).ok_or_else(|| format!("unknown serverbound play packet 0x{:02x}", pkt.id))?;
-                out.push(Packet::new(mapped, pkt.payload.clone()));
+                out.push(Packet::new(mapped, std::mem::take(&mut pkt.payload)));
                 Ok(())
             }
         }
@@ -269,18 +275,18 @@ impl Translator for V26_3To26_2 {
     fn to(&self) -> Version {
         Version { protocol: 776 }
     }
-    fn clientbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn clientbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_clientbound(pkt, out),
             State::Configuration => self.config_clientbound(pkt, out),
         }
     }
-    fn serverbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn serverbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_serverbound(pkt, out),
             // Configuration serverbound ids are identical in 26.2 and 26.3.
             State::Configuration => {
-                out.push(pkt.clone());
+                out.push(Packet::new(pkt.id, std::mem::take(&mut pkt.payload)));
                 Ok(())
             }
         }
@@ -348,7 +354,7 @@ mod capture_replay {
             let after = Packet::new(id, out.clone().unwrap_or(payload.clone()));
             // what is sent must now read cleanly and need nothing more
             t.to_client.take_repairs();
-            let read = t.play_clientbound(&after, &mut Vec::new());
+            let read = t.play_clientbound(&mut after.clone(), &mut Vec::new());
             let left = t.to_client.take_repairs().len();
             if read.is_err() || left > 0 {
                 bad += 1;

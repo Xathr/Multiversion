@@ -31,7 +31,7 @@ impl V1_20_3To1_20_2 {
         Self { entities: Entities::default(), misc: Misc::new() }
     }
 
-    fn play_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let p = &pkt.payload[..];
         let e = |e: crate::proto::buf::DecodeError| format!("clientbound 0x{:02x}: {e}", pkt.id);
         let payload = match pkt.id {
@@ -115,14 +115,14 @@ impl V1_20_3To1_20_2 {
             new::SET_OBJECTIVE => misc::set_objective(p).map_err(e)?,
             new::SET_SCORE => misc::set_score(p).map_err(e)?,
             new::RESOURCE_PACK_PUSH => self.misc.resource_pack_push(p).map_err(e)?,
-            _ => p.to_vec(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         let mapped = ids::play_clientbound(pkt.id).ok_or_else(|| format!("no 1.20.2 equivalent for clientbound play packet 0x{:02x}", pkt.id))?;
         out.push(Packet::new(mapped, payload));
         Ok(())
     }
 
-    fn config_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn config_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let p = &pkt.payload[..];
         let e = |e: crate::proto::buf::DecodeError| format!("config 0x{:02x}: {e}", pkt.id);
         let payload = match pkt.id {
@@ -131,14 +131,14 @@ impl V1_20_3To1_20_2 {
             new::CONFIG_DISCONNECT => misc::leading_components(p, 1).map_err(e)?,
             new::CONFIG_UPDATE_TAGS => world::update_tags(p).map_err(e)?,
             new::CONFIG_UPDATE_ENABLED_FEATURES => world::enabled_features(p).map_err(e)?,
-            _ => p.to_vec(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         let mapped = ids::config_clientbound(pkt.id).ok_or_else(|| format!("no 1.20.2 equivalent for clientbound config packet 0x{:02x}", pkt.id))?;
         out.push(Packet::new(mapped, payload));
         Ok(())
     }
 
-    fn play_serverbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_serverbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let p = &pkt.payload[..];
         let e = |e: crate::proto::buf::DecodeError| format!("serverbound 0x{:02x}: {e}", pkt.id);
         let payload = match pkt.id {
@@ -146,7 +146,7 @@ impl V1_20_3To1_20_2 {
             old::S_SET_CREATIVE_MODE_SLOT => misc::set_creative_slot(p).map_err(e)?,
             old::S_RESOURCE_PACK => self.misc.resource_pack_status(p),
             old::S_SET_JIGSAW_BLOCK => misc::set_jigsaw_block(p),
-            _ => p.to_vec(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         let mapped = ids::play_serverbound(pkt.id).ok_or_else(|| format!("no 1.20.3 equivalent for serverbound play packet 0x{:02x}", pkt.id))?;
         out.push(Packet::new(mapped, payload));
@@ -167,13 +167,13 @@ impl Translator for V1_20_3To1_20_2 {
     fn to(&self) -> Version {
         Version { protocol: 764 }
     }
-    fn clientbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn clientbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_clientbound(pkt, out),
             State::Configuration => self.config_clientbound(pkt, out),
         }
     }
-    fn serverbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn serverbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_serverbound(pkt, out),
             State::Configuration => {
@@ -200,15 +200,15 @@ mod tests {
     fn new_packets_are_dropped() {
         let mut t = V1_20_3To1_20_2::new();
         let mut out = Vec::new();
-        t.clientbound(State::Play, &Packet::new(new::TICKING_STATE, vec![0, 0, 0xA0, 0x41, 0]), &mut out).unwrap();
-        t.clientbound(State::Play, &Packet::new(new::TICKING_STEP, vec![5]), &mut out).unwrap();
-        t.clientbound(State::Play, &Packet::new(new::RESOURCE_PACK_POP, vec![0]), &mut out).unwrap();
-        t.clientbound(State::Configuration, &Packet::new(new::CONFIG_RESOURCE_PACK_POP, vec![0]), &mut out).unwrap();
+        t.clientbound(State::Play, &mut Packet::new(new::TICKING_STATE, vec![0, 0, 0xA0, 0x41, 0]), &mut out).unwrap();
+        t.clientbound(State::Play, &mut Packet::new(new::TICKING_STEP, vec![5]), &mut out).unwrap();
+        t.clientbound(State::Play, &mut Packet::new(new::RESOURCE_PACK_POP, vec![0]), &mut out).unwrap();
+        t.clientbound(State::Configuration, &mut Packet::new(new::CONFIG_RESOURCE_PACK_POP, vec![0]), &mut out).unwrap();
         assert!(out.is_empty());
         // everything else passes with its 1.20.2 id
-        t.clientbound(State::Play, &Packet::new(0x6B, vec![1, 2, 3]), &mut out).unwrap();
+        t.clientbound(State::Play, &mut Packet::new(0x6B, vec![1, 2, 3]), &mut out).unwrap();
         assert_eq!((out[0].id, out[0].payload.clone()), (0x69, vec![1, 2, 3]));
-        t.clientbound(State::Configuration, &Packet::new(0x05, vec![4]), &mut out).unwrap();
+        t.clientbound(State::Configuration, &mut Packet::new(0x05, vec![4]), &mut out).unwrap();
         assert_eq!(out[1].id, 0x05);
     }
 
@@ -218,8 +218,8 @@ mod tests {
         nbt::write(&mut w, &text("Bye"));
         let mut t = V1_20_3To1_20_2::new();
         let mut out = Vec::new();
-        t.clientbound(State::Play, &Packet::new(new::DISCONNECT, w.buf.clone()), &mut out).unwrap();
-        t.clientbound(State::Configuration, &Packet::new(new::CONFIG_DISCONNECT, w.buf), &mut out).unwrap();
+        t.clientbound(State::Play, &mut Packet::new(new::DISCONNECT, w.buf.clone()), &mut out).unwrap();
+        t.clientbound(State::Configuration, &mut Packet::new(new::CONFIG_DISCONNECT, w.buf), &mut out).unwrap();
         for (p, id) in out.iter().zip([0x1B, 0x01]) {
             assert_eq!(p.id, id);
             let v: serde_json::Value = serde_json::from_str(Reader::new(&p.payload).string().unwrap()).unwrap();
@@ -233,7 +233,7 @@ mod tests {
         w.string("Steve").bool(false);
         let mut t = V1_20_3To1_20_2::new();
         let mut out = Vec::new();
-        t.clientbound(State::Play, &Packet::new(new::RESET_SCORE, w.buf), &mut out).unwrap();
+        t.clientbound(State::Play, &mut Packet::new(new::RESET_SCORE, w.buf), &mut out).unwrap();
         assert_eq!(out[0].id, old::SET_SCORE);
     }
 
@@ -244,7 +244,7 @@ mod tests {
         w.bool(false).bool(true);
         let mut t = V1_20_3To1_20_2::new();
         let mut out = Vec::new();
-        t.clientbound(State::Play, &Packet::new(new::SERVER_DATA, w.buf), &mut out).unwrap();
+        t.clientbound(State::Play, &mut Packet::new(new::SERVER_DATA, w.buf), &mut out).unwrap();
         assert_eq!(out[0].id, 0x47);
         let mut r = Reader::new(&out[0].payload);
         assert_eq!(r.string().unwrap(), r#""A Pumpkin server""#);
@@ -257,13 +257,13 @@ mod tests {
         let mut push = Writer::new();
         push.uuid(77).string("u").string("h").bool(false).bool(false);
         let mut out = Vec::new();
-        t.clientbound(State::Configuration, &Packet::new(new::CONFIG_RESOURCE_PACK_PUSH, push.buf), &mut out).unwrap();
+        t.clientbound(State::Configuration, &mut Packet::new(new::CONFIG_RESOURCE_PACK_PUSH, push.buf), &mut out).unwrap();
         assert_eq!(out[0].id, old::CONFIG_RESOURCE_PACK);
         let mut back = Vec::new();
-        t.serverbound(State::Configuration, &Packet::new(old::S_CONFIG_RESOURCE_PACK, vec![0]), &mut back).unwrap();
-        t.serverbound(State::Play, &Packet::new(old::S_RESOURCE_PACK, vec![3]), &mut back).unwrap();
-        t.serverbound(State::Play, &Packet::new(old::S_CUSTOM_PAYLOAD, vec![9]), &mut back).unwrap();
-        t.serverbound(State::Play, &Packet::new(0x00, vec![1]), &mut back).unwrap();
+        t.serverbound(State::Configuration, &mut Packet::new(old::S_CONFIG_RESOURCE_PACK, vec![0]), &mut back).unwrap();
+        t.serverbound(State::Play, &mut Packet::new(old::S_RESOURCE_PACK, vec![3]), &mut back).unwrap();
+        t.serverbound(State::Play, &mut Packet::new(old::S_CUSTOM_PAYLOAD, vec![9]), &mut back).unwrap();
+        t.serverbound(State::Play, &mut Packet::new(0x00, vec![1]), &mut back).unwrap();
         assert_eq!(back[0].id, old::S_CONFIG_RESOURCE_PACK);
         assert_eq!(Reader::new(&back[0].payload).uuid().unwrap(), 77);
         assert_eq!(back[1].id, new::S_RESOURCE_PACK);

@@ -38,7 +38,7 @@ impl V1_21_5To1_21_4 {
         }
     }
 
-    fn play_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let items = &self.to_client;
         let regs = &self.registries;
         let p = &pkt.payload[..];
@@ -109,11 +109,11 @@ impl V1_21_5To1_21_4 {
         let Some(mapped) = ids::play_clientbound(pkt.id) else {
             return Err(format!("no 1.21.4 equivalent for clientbound play packet 0x{:02x}", pkt.id));
         };
-        out.push(Packet::new(mapped, translated.unwrap_or_else(|| pkt.payload.clone())));
+        out.push(Packet::new(mapped, translated.unwrap_or_else(|| std::mem::take(&mut pkt.payload))));
         Ok(())
     }
 
-    fn config_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn config_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let e = |e: crate::proto::buf::DecodeError| format!("config 0x{:02x}: {e}", pkt.id);
         let payload = match pkt.id {
             new::CONFIG_REGISTRY_DATA => match World::registry_data(&mut self.registries, &pkt.payload).map_err(e)? {
@@ -121,13 +121,13 @@ impl V1_21_5To1_21_4 {
                 None => return Ok(()),
             },
             new::CONFIG_UPDATE_TAGS => World::update_tags(&self.to_client, &pkt.payload).map_err(e)?,
-            _ => pkt.payload.clone(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         out.push(Packet::new(pkt.id, payload));
         Ok(())
     }
 
-    fn play_serverbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_serverbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let e = |e: crate::proto::buf::DecodeError| format!("serverbound 0x{:02x}: {e}", pkt.id);
         let items = &self.to_server;
         let p = &pkt.payload[..];
@@ -135,7 +135,7 @@ impl V1_21_5To1_21_4 {
             ids::old::S_SET_CREATIVE_MODE_SLOT => self.misc.set_creative_slot(items, p).map_err(e)?,
             ids::old::S_CONTAINER_CLICK => self.misc.container_click(items, p).map_err(e)?,
             ids::old::S_CHAT | ids::old::S_CHAT_COMMAND_SIGNED => Misc::append_checksum(p),
-            _ => pkt.payload.clone(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         let mapped = ids::play_serverbound(pkt.id).ok_or_else(|| format!("unknown serverbound play packet 0x{:02x}", pkt.id))?;
         out.push(Packet::new(mapped, payload));
@@ -156,18 +156,18 @@ impl Translator for V1_21_5To1_21_4 {
     fn to(&self) -> Version {
         Version { protocol: 769 }
     }
-    fn clientbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn clientbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_clientbound(pkt, out),
             State::Configuration => self.config_clientbound(pkt, out),
         }
     }
-    fn serverbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn serverbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_serverbound(pkt, out),
             // Configuration serverbound ids are identical in 1.21.4 and 1.21.5.
             State::Configuration => {
-                out.push(pkt.clone());
+                out.push(Packet::new(pkt.id, std::mem::take(&mut pkt.payload)));
                 Ok(())
             }
         }
@@ -187,10 +187,10 @@ mod tests {
     fn test_instance_status_is_dropped_and_ids_shift() {
         let mut t = V1_21_5To1_21_4::new();
         let mut out = Vec::new();
-        t.clientbound(State::Play, &Packet::new(new::TEST_INSTANCE_BLOCK_STATUS, vec![1, 2]), &mut out).unwrap();
+        t.clientbound(State::Play, &mut Packet::new(new::TEST_INSTANCE_BLOCK_STATUS, vec![1, 2]), &mut out).unwrap();
         assert!(out.is_empty());
         // CLEAR_TITLES (1.21.5 id 14) has no payload changes → id + 1.
-        t.clientbound(State::Play, &Packet::new(14, vec![0]), &mut out).unwrap();
+        t.clientbound(State::Play, &mut Packet::new(14, vec![0]), &mut out).unwrap();
         assert_eq!(out[0].id, 15);
     }
 
@@ -198,7 +198,7 @@ mod tests {
     fn serverbound_chat_gains_checksum() {
         let mut t = V1_21_5To1_21_4::new();
         let mut out = Vec::new();
-        t.serverbound(State::Play, &Packet::new(ids::old::S_CHAT, vec![5]), &mut out).unwrap();
+        t.serverbound(State::Play, &mut Packet::new(ids::old::S_CHAT, vec![5]), &mut out).unwrap();
         assert_eq!(out[0].id, new::S_CHAT);
         assert_eq!(out[0].payload, vec![5, 0]);
     }

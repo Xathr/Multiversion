@@ -47,7 +47,7 @@ fn skip_value(r: &mut Reader, ty: i32) -> Result<bool> {
             if r.bool()? {
                 r.varint()?;
                 r.i8()?;
-                nbt::read_named_optional(r)?;
+                nbt::skip_named_optional(r)?;
             }
         }
         7 => {
@@ -66,7 +66,7 @@ fn skip_value(r: &mut Reader, ty: i32) -> Result<bool> {
             r.option(Reader::uuid)?;
         }
         14 => {
-            nbt::read_named_optional(r)?;
+            nbt::skip_named_optional(r)?;
         }
         16 => {
             // villager data: type, profession, level

@@ -39,7 +39,7 @@ pub fn entity_type(id: i32) -> i32 {
 /// Copies named optional NBT as it is: the bytes are the same in both versions, they are only
 /// read to find where the value ends.
 pub fn nbt_copy(r: &mut Reader, w: &mut Writer) -> Result<()> {
-    r.copy_to(w, |r| nbt::read_named_optional(r).map(|_| ()))
+    r.copy_to(w, |r| nbt::skip_named_optional(r))
 }
 
 fn stack(r: &mut Reader, w: &mut Writer, map: fn(i32) -> i32) -> Result<()> {

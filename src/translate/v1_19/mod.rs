@@ -40,7 +40,7 @@ impl V1_19_1To1_19 {
         Self { chat_types: chat::ChatTypes::default(), seen: chat::Seen::default(), allays: HashSet::new(), replies: Vec::new() }
     }
 
-    fn play_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let p = &pkt.payload[..];
         let e = |e: crate::proto::buf::DecodeError| format!("clientbound 0x{:02x}: {e}", pkt.id);
         let payload = match pkt.id {
@@ -90,20 +90,20 @@ impl V1_19_1To1_19 {
                 let id = Reader::new(p).varint().map_err(e)?;
                 if self.allays.contains(&id) { entity::allay_data(p).map_err(e)? } else { p.to_vec() }
             }
-            _ => p.to_vec(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         let mapped = ids::play_clientbound(pkt.id).ok_or_else(|| format!("no 1.19 equivalent for clientbound play packet 0x{:02x}", pkt.id))?;
         out.push(Packet::new(mapped, payload));
         Ok(())
     }
 
-    fn play_serverbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_serverbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let p = &pkt.payload[..];
         let e = |e: crate::proto::buf::DecodeError| format!("serverbound 0x{:02x}: {e}", pkt.id);
         let payload = match pkt.id {
             old::S_CHAT => chat::chat(p, &mut self.seen).map_err(e)?,
             old::S_CHAT_COMMAND => chat::chat_command(p, &mut self.seen).map_err(e)?,
-            _ => p.to_vec(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         let mapped = ids::play_serverbound(pkt.id).ok_or_else(|| format!("unknown 1.19 serverbound play packet 0x{:02x}", pkt.id))?;
         out.push(Packet::new(mapped, payload));
@@ -124,21 +124,21 @@ impl Translator for V1_19_1To1_19 {
     fn to(&self) -> Version {
         Version { protocol: 759 }
     }
-    fn clientbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn clientbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_clientbound(pkt, out),
             // neither version has a configuration phase: a newer step stands in for it
             State::Configuration => {
-                out.push(pkt.clone());
+                out.push(Packet::new(pkt.id, std::mem::take(&mut pkt.payload)));
                 Ok(())
             }
         }
     }
-    fn serverbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn serverbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_serverbound(pkt, out),
             State::Configuration => {
-                out.push(pkt.clone());
+                out.push(Packet::new(pkt.id, std::mem::take(&mut pkt.payload)));
                 Ok(())
             }
         }
@@ -157,13 +157,13 @@ mod tests {
 
     fn cb(t: &mut V1_19_1To1_19, id: i32, payload: Vec<u8>) -> Vec<Packet> {
         let mut out = Vec::new();
-        t.clientbound(State::Play, &Packet::new(id, payload), &mut out).unwrap();
+        t.clientbound(State::Play, &mut Packet::new(id, payload), &mut out).unwrap();
         out
     }
 
     fn sb(t: &mut V1_19_1To1_19, id: i32, payload: Vec<u8>) -> Vec<Packet> {
         let mut out = Vec::new();
-        t.serverbound(State::Play, &Packet::new(id, payload), &mut out).unwrap();
+        t.serverbound(State::Play, &mut Packet::new(id, payload), &mut out).unwrap();
         out
     }
 
@@ -286,12 +286,12 @@ mod tests {
         assert_eq!((out[0].id, out[0].payload.len()), (18, 8));
         // ids neither version has are refused
         let mut out = Vec::new();
-        assert!(t.clientbound(State::Play, &Packet::new(108, Vec::new()), &mut out).is_err());
-        assert!(t.serverbound(State::Play, &Packet::new(50, Vec::new()), &mut out).is_err());
+        assert!(t.clientbound(State::Play, &mut Packet::new(108, Vec::new()), &mut out).is_err());
+        assert!(t.serverbound(State::Play, &mut Packet::new(50, Vec::new()), &mut out).is_err());
         assert!(out.is_empty());
         // there is no configuration phase to translate
-        t.clientbound(State::Configuration, &Packet::new(new::PLAYER_CHAT, vec![1]), &mut out).unwrap();
-        t.serverbound(State::Configuration, &Packet::new(old::S_CHAT, vec![1]), &mut out).unwrap();
+        t.clientbound(State::Configuration, &mut Packet::new(new::PLAYER_CHAT, vec![1]), &mut out).unwrap();
+        t.serverbound(State::Configuration, &mut Packet::new(old::S_CHAT, vec![1]), &mut out).unwrap();
         assert_eq!(out.iter().map(|p| (p.id, p.payload.clone())).collect::<Vec<_>>(), vec![(new::PLAYER_CHAT, vec![1]), (old::S_CHAT, vec![1])]);
     }
 
@@ -431,7 +431,7 @@ mod tests {
             let started = std::time::Instant::now();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut out = Vec::new();
-                let r = if to_server { t.serverbound(state, &pkt, &mut out) } else { t.clientbound(state, &pkt, &mut out) };
+                let r = if to_server { t.serverbound(state, &mut pkt.clone(), &mut out) } else { t.clientbound(state, &mut pkt.clone(), &mut out) };
                 (r, out)
             }));
             match result {

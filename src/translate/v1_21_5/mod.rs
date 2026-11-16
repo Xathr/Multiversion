@@ -31,7 +31,7 @@ impl V1_21_6To1_21_5 {
         Self { to_client: Items::new(Dir::ToClient), to_server: Items::new(Dir::ToServer), entities: Entities::default(), misc: Misc::new() }
     }
 
-    fn play_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let items = &self.to_client;
         let p = &pkt.payload[..];
         let e = |e: DecodeError| format!("clientbound 0x{:02x}: {e}", pkt.id);
@@ -87,11 +87,11 @@ impl V1_21_6To1_21_5 {
         let Some(mapped) = ids::play_clientbound(pkt.id) else {
             return Err(format!("no 1.21.5 equivalent for clientbound play packet 0x{:02x}", pkt.id));
         };
-        out.push(Packet::new(mapped, translated.unwrap_or_else(|| pkt.payload.clone())));
+        out.push(Packet::new(mapped, translated.unwrap_or_else(|| std::mem::take(&mut pkt.payload))));
         Ok(())
     }
 
-    fn config_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn config_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let e = |e: DecodeError| format!("config 0x{:02x}: {e}", pkt.id);
         let payload = match pkt.id {
             new::CONFIG_REGISTRY_DATA => match World::registry_data(&pkt.payload).map_err(e)? {
@@ -100,14 +100,14 @@ impl V1_21_6To1_21_5 {
             },
             new::CONFIG_UPDATE_TAGS => World::update_tags(&self.to_client, &pkt.payload).map_err(e)?,
             new::CONFIG_CLEAR_DIALOG | new::CONFIG_SHOW_DIALOG => return Ok(()),
-            _ => pkt.payload.clone(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         let mapped = ids::config_clientbound(pkt.id).ok_or_else(|| format!("no 1.21.5 config packet for 0x{:02x}", pkt.id))?;
         out.push(Packet::new(mapped, payload));
         Ok(())
     }
 
-    fn play_serverbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_serverbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let e = |e: DecodeError| format!("serverbound 0x{:02x}: {e}", pkt.id);
         let items = &self.to_server;
         let p = &pkt.payload[..];
@@ -119,7 +119,7 @@ impl V1_21_6To1_21_5 {
             },
             ids::old::S_SET_CREATIVE_MODE_SLOT => self.misc.set_creative_slot(items, p).map_err(e)?,
             ids::old::S_CONTAINER_CLICK => self.misc.container_click(items, p).map_err(e)?,
-            _ => pkt.payload.clone(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         let mapped = ids::play_serverbound(pkt.id).ok_or_else(|| format!("unknown serverbound play packet 0x{:02x}", pkt.id))?;
         out.push(Packet::new(mapped, payload));
@@ -140,18 +140,18 @@ impl Translator for V1_21_6To1_21_5 {
     fn to(&self) -> Version {
         Version { protocol: 770 }
     }
-    fn clientbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn clientbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_clientbound(pkt, out),
             State::Configuration => self.config_clientbound(pkt, out),
         }
     }
-    fn serverbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn serverbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_serverbound(pkt, out),
             // Configuration serverbound ids are identical; 1.21.6 only appended CUSTOM_CLICK_ACTION.
             State::Configuration => {
-                out.push(pkt.clone());
+                out.push(Packet::new(pkt.id, std::mem::take(&mut pkt.payload)));
                 Ok(())
             }
         }
@@ -167,9 +167,9 @@ mod tests {
         let mut t = V1_21_6To1_21_5::new();
         let mut out = Vec::new();
         for id in [new::TRACKED_WAYPOINT, new::SHOW_DIALOG, new::CLEAR_DIALOG] {
-            t.clientbound(State::Play, &Packet::new(id, vec![0]), &mut out).unwrap();
+            t.clientbound(State::Play, &mut Packet::new(id, vec![0]), &mut out).unwrap();
         }
-        t.clientbound(State::Configuration, &Packet::new(new::CONFIG_SHOW_DIALOG, vec![0]), &mut out).unwrap();
+        t.clientbound(State::Configuration, &mut Packet::new(new::CONFIG_SHOW_DIALOG, vec![0]), &mut out).unwrap();
         assert!(out.is_empty());
     }
 
@@ -177,11 +177,11 @@ mod tests {
     fn unchanged_packets_pass_through() {
         let mut t = V1_21_6To1_21_5::new();
         let mut out = Vec::new();
-        t.clientbound(State::Play, &Packet::new(38, vec![1, 2, 3]), &mut out).unwrap(); // keep alive
+        t.clientbound(State::Play, &mut Packet::new(38, vec![1, 2, 3]), &mut out).unwrap(); // keep alive
         assert_eq!(out[0].id, 38);
         assert_eq!(out[0].payload, vec![1, 2, 3]);
         out.clear();
-        t.serverbound(State::Play, &Packet::new(26, vec![4]), &mut out).unwrap(); // 1.21.5 keep alive
+        t.serverbound(State::Play, &mut Packet::new(26, vec![4]), &mut out).unwrap(); // 1.21.5 keep alive
         assert_eq!(out[0].id, 27);
     }
 }

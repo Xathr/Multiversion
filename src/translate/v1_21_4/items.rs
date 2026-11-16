@@ -146,7 +146,7 @@ impl Items {
         self.source_names().get(usize::try_from(id).ok()?).copied()
     }
     fn target_component_id(&self, name: &str) -> Option<i32> {
-        self.target_names().iter().position(|n| *n == name).map(|i| i as i32)
+        crate::translate::table::position(self.target_names(), name)
     }
     /// Component type id in the target version, or `None` if the target lacks it.
     pub fn component_type(&self, id: i32) -> Option<i32> {

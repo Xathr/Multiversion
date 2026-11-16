@@ -156,7 +156,7 @@ impl V1_18_2To1_18 {
         Self
     }
 
-    fn play_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let p = &pkt.payload[..];
         let e = |e: DecodeError| format!("clientbound 0x{:02x}: {e}", pkt.id);
         let payload = match pkt.id {
@@ -167,7 +167,7 @@ impl V1_18_2To1_18 {
                 Some(v) => v,
                 None => return Ok(()),
             },
-            _ => p.to_vec(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         out.push(Packet::new(pkt.id, payload));
         Ok(())
@@ -181,19 +181,19 @@ impl Translator for V1_18_2To1_18 {
     fn to(&self) -> Version {
         Version { protocol: 757 }
     }
-    fn clientbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn clientbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_clientbound(pkt, out),
             // neither version has a configuration phase: a newer step stands in for it
             State::Configuration => {
-                out.push(pkt.clone());
+                out.push(Packet::new(pkt.id, std::mem::take(&mut pkt.payload)));
                 Ok(())
             }
         }
     }
     /// Everything the client sends is the same in both versions.
-    fn serverbound(&mut self, _state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
-        out.push(pkt.clone());
+    fn serverbound(&mut self, _state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
+        out.push(Packet::new(pkt.id, std::mem::take(&mut pkt.payload)));
         Ok(())
     }
 }
@@ -204,7 +204,7 @@ mod tests {
 
     fn cb(id: i32, payload: Vec<u8>) -> Vec<Packet> {
         let mut out = Vec::new();
-        V1_18_2To1_18::new().clientbound(State::Play, &Packet::new(id, payload), &mut out).unwrap();
+        V1_18_2To1_18::new().clientbound(State::Play, &mut Packet::new(id, payload), &mut out).unwrap();
         out
     }
 
@@ -249,7 +249,7 @@ mod tests {
         // already plain: unchanged
         assert_eq!(cb(RESPAWN, respawn_packet("minecraft:infiniburn_end"))[0].payload, respawn_packet("minecraft:infiniburn_end"));
         let mut out = Vec::new();
-        assert!(V1_18_2To1_18::new().clientbound(State::Play, &Packet::new(LOGIN, vec![0, 0, 0, 1]), &mut out).is_err());
+        assert!(V1_18_2To1_18::new().clientbound(State::Play, &mut Packet::new(LOGIN, vec![0, 0, 0, 1]), &mut out).is_err());
     }
 
     #[test]
@@ -292,8 +292,8 @@ mod tests {
         assert_eq!(cb(33, vec![1, 2, 3])[0].payload, [1, 2, 3]);
         let mut t = V1_18_2To1_18::new();
         let mut out = Vec::new();
-        t.serverbound(State::Play, &Packet::new(3, vec![4, 5]), &mut out).unwrap();
-        t.clientbound(State::Configuration, &Packet::new(LOGIN, vec![6]), &mut out).unwrap();
+        t.serverbound(State::Play, &mut Packet::new(3, vec![4, 5]), &mut out).unwrap();
+        t.clientbound(State::Configuration, &mut Packet::new(LOGIN, vec![6]), &mut out).unwrap();
         assert_eq!(out.iter().map(|p| (p.id, p.payload.clone())).collect::<Vec<_>>(), [(3, vec![4, 5]), (LOGIN, vec![6])]);
     }
 

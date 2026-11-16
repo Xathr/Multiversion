@@ -39,7 +39,7 @@ fn item_copy(r: &mut Reader, w: &mut Writer) -> Result<()> {
         if r.bool()? {
             r.varint()?;
             r.i8()?;
-            nbt::read_named_optional(r)?;
+            nbt::skip_named_optional(r)?;
         }
         Ok(())
     })
@@ -141,7 +141,7 @@ impl V1_17_1To1_17 {
         Self::default()
     }
 
-    fn play_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let p = &pkt.payload[..];
         let e = |e: DecodeError| format!("clientbound 0x{:02x}: {e}", pkt.id);
         match pkt.id {
@@ -169,12 +169,12 @@ impl V1_17_1To1_17 {
                 out.push(Packet::new(pkt.id, payload));
                 out.push(Packet::new(CONTAINER_SET_SLOT, cursor));
             }
-            _ => out.push(pkt.clone()),
+            _ => out.push(Packet::new(pkt.id, std::mem::take(&mut pkt.payload))),
         }
         Ok(())
     }
 
-    fn play_serverbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_serverbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let p = &pkt.payload[..];
         let e = |e: DecodeError| format!("serverbound 0x{:02x}: {e}", pkt.id);
         let payload = match pkt.id {
@@ -190,7 +190,7 @@ impl V1_17_1To1_17 {
                 p.to_vec()
             }
             EDIT_BOOK => edit_book(p).map_err(e)?,
-            _ => p.to_vec(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         out.push(Packet::new(pkt.id, payload));
         Ok(())
@@ -204,20 +204,20 @@ impl Translator for V1_17_1To1_17 {
     fn to(&self) -> Version {
         Version { protocol: 755 }
     }
-    fn clientbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn clientbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_clientbound(pkt, out),
             State::Configuration => {
-                out.push(pkt.clone());
+                out.push(Packet::new(pkt.id, std::mem::take(&mut pkt.payload)));
                 Ok(())
             }
         }
     }
-    fn serverbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn serverbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_serverbound(pkt, out),
             State::Configuration => {
-                out.push(pkt.clone());
+                out.push(Packet::new(pkt.id, std::mem::take(&mut pkt.payload)));
                 Ok(())
             }
         }
@@ -235,7 +235,7 @@ mod tests {
     fn play(step: &mut V1_17_1To1_17, clientbound: bool, id: i32, payload: Vec<u8>) -> Vec<Packet> {
         let mut out = Vec::new();
         let pkt = Packet::new(id, payload);
-        if clientbound { step.clientbound(State::Play, &pkt, &mut out) } else { step.serverbound(State::Play, &pkt, &mut out) }.unwrap();
+        if clientbound { step.clientbound(State::Play, &mut pkt.clone(), &mut out) } else { step.serverbound(State::Play, &mut pkt.clone(), &mut out) }.unwrap();
         out
     }
 
@@ -312,6 +312,6 @@ mod tests {
         let mut step = V1_17_1To1_17::new();
         assert_eq!(play(&mut step, true, 0x30, vec![1, 2, 3])[0].payload, [1, 2, 3]);
         assert_eq!(play(&mut step, false, 0x03, vec![4])[0].payload, [4]);
-        assert!(step.clientbound(State::Play, &Packet::new(CONTAINER_SET_CONTENT, vec![1]), &mut Vec::new()).is_err());
+        assert!(step.clientbound(State::Play, &mut Packet::new(CONTAINER_SET_CONTENT, vec![1]), &mut Vec::new()).is_err());
     }
 }

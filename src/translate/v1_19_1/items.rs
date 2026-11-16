@@ -98,7 +98,7 @@ fn stand_in_tag(id: i32, tag: Option<Tag>) -> Tag {
 
 /// Skips one named NBT value and copies its bytes unchanged.
 pub fn nbt_copy(r: &mut Reader, w: &mut Writer) -> Result<()> {
-    r.copy_to(w, |r| nbt::read_named_optional(r).map(|_| ()))
+    r.copy_to(w, |r| nbt::skip_named_optional(r))
 }
 
 /// An item stack, 1.19.3 → 1.19.1.

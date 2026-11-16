@@ -40,7 +40,7 @@ impl V1_21_4To1_21_2 {
         }
     }
 
-    fn play_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let items = &self.to_client;
         let misc = &self.misc;
         let p = &pkt.payload[..];
@@ -87,24 +87,24 @@ impl V1_21_4To1_21_2 {
             _ => None,
         };
         let mapped = ids::play_clientbound(pkt.id).ok_or_else(|| format!("no 1.21.2 equivalent for clientbound play packet 0x{:02x}", pkt.id))?;
-        out.push(Packet::new(mapped, translated.unwrap_or_else(|| pkt.payload.clone())));
+        out.push(Packet::new(mapped, translated.unwrap_or_else(|| std::mem::take(&mut pkt.payload))));
         Ok(())
     }
 
-    fn config_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn config_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let e = |e: crate::proto::buf::DecodeError| format!("config 0x{:02x}: {e}", pkt.id);
         let payload = match pkt.id {
             new::CONFIG_REGISTRY_DATA => World::registry_data(&pkt.payload).map_err(e)?,
             new::CONFIG_UPDATE_TAGS => World::update_tags(&self.to_client, &pkt.payload).map_err(e)?,
             new::CONFIG_UPDATE_ENABLED_FEATURES => enabled_features(&pkt.payload).map_err(e)?,
-            _ => pkt.payload.clone(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         let mapped = ids::config_clientbound(pkt.id).ok_or_else(|| format!("no 1.21.2 config packet for 0x{:02x}", pkt.id))?;
         out.push(Packet::new(mapped, payload));
         Ok(())
     }
 
-    fn play_serverbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_serverbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         if std::mem::take(&mut self.player_loaded_pending) {
             out.push(Packet::new(new::S_PLAYER_LOADED, Vec::new()));
         }
@@ -119,7 +119,7 @@ impl V1_21_4To1_21_2 {
             ids::old::S_SET_CREATIVE_MODE_SLOT => self.misc.set_creative_slot(items, p).map_err(e)?,
             ids::old::S_CONTAINER_CLICK => self.misc.container_click(items, p).map_err(e)?,
             ids::old::S_MOVE_VEHICLE => self.misc.move_vehicle(p).map_err(e)?,
-            _ => pkt.payload.clone(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         out.push(Packet::new(mapped, payload));
         Ok(())
@@ -155,18 +155,18 @@ impl Translator for V1_21_4To1_21_2 {
     fn to(&self) -> Version {
         Version { protocol: 768 }
     }
-    fn clientbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn clientbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_clientbound(pkt, out),
             State::Configuration => self.config_clientbound(pkt, out),
         }
     }
-    fn serverbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn serverbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_serverbound(pkt, out),
             // Configuration serverbound packets are identical in 1.21.2 and 1.21.4.
             State::Configuration => {
-                out.push(pkt.clone());
+                out.push(Packet::new(pkt.id, std::mem::take(&mut pkt.payload)));
                 Ok(())
             }
         }
@@ -194,15 +194,15 @@ mod tests {
     fn player_loaded_follows_login() {
         let mut t = V1_21_4To1_21_2::new();
         let mut out = Vec::new();
-        t.clientbound(State::Play, &Packet::new(new::RESPAWN, vec![0; 4]), &mut out).unwrap();
+        t.clientbound(State::Play, &mut Packet::new(new::RESPAWN, vec![0; 4]), &mut out).unwrap();
         assert_eq!(out[0].id, new::RESPAWN);
         let mut sb = Vec::new();
-        t.serverbound(State::Play, &Packet::new(0x0B, Vec::new()), &mut sb).unwrap(); // CLIENT_TICK_END
+        t.serverbound(State::Play, &mut Packet::new(0x0B, Vec::new()), &mut sb).unwrap(); // CLIENT_TICK_END
         assert_eq!(sb.len(), 2);
         assert_eq!(sb[0].id, new::S_PLAYER_LOADED);
         assert_eq!(sb[1].id, 0x0B);
         let mut sb = Vec::new();
-        t.serverbound(State::Play, &Packet::new(0x0B, Vec::new()), &mut sb).unwrap();
+        t.serverbound(State::Play, &mut Packet::new(0x0B, Vec::new()), &mut sb).unwrap();
         assert_eq!(sb.len(), 1);
     }
 
@@ -210,9 +210,9 @@ mod tests {
     fn pick_item_is_dropped_and_vehicle_gains_on_ground() {
         let mut t = V1_21_4To1_21_2::new();
         let mut sb = Vec::new();
-        t.serverbound(State::Play, &Packet::new(ids::old::S_PICK_ITEM, vec![3]), &mut sb).unwrap();
+        t.serverbound(State::Play, &mut Packet::new(ids::old::S_PICK_ITEM, vec![3]), &mut sb).unwrap();
         assert!(sb.is_empty());
-        t.serverbound(State::Play, &Packet::new(ids::old::S_MOVE_VEHICLE, vec![0; 32]), &mut sb).unwrap();
+        t.serverbound(State::Play, &mut Packet::new(ids::old::S_MOVE_VEHICLE, vec![0; 32]), &mut sb).unwrap();
         assert_eq!(sb[0].id, new::S_MOVE_VEHICLE);
         assert_eq!(sb[0].payload.len(), 33);
     }

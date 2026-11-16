@@ -92,6 +92,30 @@ impl SameName {
     }
 }
 
+/// Where `name` is in a list of names, found through an index that is built the first time the
+/// list is asked about. Item components, entities and the like are looked up by name for every
+/// packet that carries them; searching the list each time meant hundreds of string comparisons
+/// per item.
+pub fn position(names: &'static [&'static str], name: &str) -> Option<i32> {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    thread_local! {
+        static INDEXES: RefCell<HashMap<(usize, usize), HashMap<&'static str, i32>>> = RefCell::new(HashMap::new());
+    }
+    INDEXES.with(|indexes| {
+        let mut indexes = indexes.borrow_mut();
+        let index = indexes.entry((names.as_ptr() as usize, names.len())).or_insert_with(|| {
+            let mut index = HashMap::with_capacity(names.len());
+            for (i, n) in names.iter().enumerate() {
+                // the first of two equal names, as a search from the front finds it
+                index.entry(*n).or_insert(i as i32);
+            }
+            index
+        });
+        index.get(name).copied()
+    })
+}
+
 /// Splits values into the runs `Table::new` takes (used by tests; the generator does the same).
 #[cfg(test)]
 pub fn runs(values: &[u32]) -> Vec<(u32, u32)> {
@@ -125,4 +149,16 @@ mod tests {
         let t = Table::new(values.len(), r);
         assert_eq!(&*t, &values);
     }
+    #[test]
+    fn position_finds_what_a_search_finds() {
+        static NAMES: [&str; 5] = ["air", "stone", "dirt", "stone", "sand"];
+        for name in ["air", "stone", "dirt", "sand", "lava", ""] {
+            assert_eq!(position(&NAMES, name), NAMES.iter().position(|n| *n == name).map(|i| i as i32), "{name}");
+        }
+        // a second list is not answered from the first one's index
+        static OTHER: [&str; 2] = ["sand", "air"];
+        assert_eq!((position(&OTHER, "sand"), position(&OTHER, "stone")), (Some(0), None));
+        assert_eq!(position(&NAMES, "sand"), Some(4));
+    }
+
 }

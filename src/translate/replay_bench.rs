@@ -71,3 +71,59 @@ fn replay() {
         println!("{:>8}  {:7.1} ms per stream  errors {}  output {digest:016x}  top {}{watched}", info.name, total.as_secs_f64() * 1000.0 / f64::from(rounds), errors / rounds, top.join("  "));
     }
 }
+
+/// What it costs to put the translated stream on the wire: compression and encryption next to
+/// the translation itself.
+///
+/// ```text
+/// MULTIVERSION_REPLAY=stream.bin cargo test --release wire_cost -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "needs a recorded stream in MULTIVERSION_REPLAY"]
+fn wire_cost() {
+    use crate::proto::frame::Outbound;
+    let Ok(path) = std::env::var("MULTIVERSION_REPLAY") else { return };
+    let stream = records(&std::fs::read(path).unwrap());
+    let rounds = 5u32;
+    for name in ["26.2", "1.21.4", "1.17"] {
+        let version = Version::from_name(name).unwrap();
+        let (mut translate, mut frame, mut encrypt) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
+        let (mut plain, mut wire_bytes) = (0usize, 0usize);
+        for _ in 0..rounds {
+            let mut chain = Chain::for_client(version).unwrap();
+            if chain.emulates_configuration() {
+                chain.login_acknowledged().unwrap();
+            }
+            let mut outbound = Outbound::default();
+            outbound.compression = 256;
+            outbound.enable_encryption([7; 16]);
+            for (state, pkt) in &stream {
+                let started = Instant::now();
+                let out = chain.clientbound(*state, pkt.clone()).unwrap_or_default();
+                translate += started.elapsed();
+                chain.take_replies();
+                for p in out {
+                    let started = Instant::now();
+                    let encoded = p.encode();
+                    let mut wire = Vec::new();
+                    outbound.frame(&encoded, &mut wire);
+                    frame += started.elapsed();
+                    let started = Instant::now();
+                    outbound.seal(&mut wire);
+                    encrypt += started.elapsed();
+                    plain += encoded.len();
+                    wire_bytes += wire.len();
+                }
+            }
+        }
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0 / f64::from(rounds);
+        println!(
+            "{name:>8}  translate {:6.1} ms  compress+frame {:6.1} ms  encrypt {:6.1} ms  ({} KB in, {} KB on the wire)",
+            ms(translate),
+            ms(frame),
+            ms(encrypt),
+            plain / rounds as usize / 1024,
+            wire_bytes / rounds as usize / 1024
+        );
+    }
+}

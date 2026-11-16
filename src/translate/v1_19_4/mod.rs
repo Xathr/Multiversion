@@ -36,7 +36,7 @@ impl V1_20To1_19_4 {
         Self::default()
     }
 
-    fn play_clientbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_clientbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let p = &pkt.payload[..];
         let e = |e: crate::proto::buf::DecodeError| format!("clientbound 0x{:02x}: {e}", pkt.id);
         if !(0..=ids::LAST_CLIENTBOUND).contains(&pkt.id) {
@@ -113,13 +113,13 @@ impl V1_20To1_19_4 {
             ids::MERCHANT_OFFERS => items::merchant_offers(p).map_err(e)?,
             ids::UPDATE_ADVANCEMENTS => items::update_advancements(p).map_err(e)?,
             ids::UPDATE_RECIPES => items::update_recipes(p).map_err(e)?,
-            _ => p.to_vec(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         out.push(Packet::new(pkt.id, payload));
         Ok(())
     }
 
-    fn play_serverbound(&mut self, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn play_serverbound(&mut self, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         let e = |e: crate::proto::buf::DecodeError| format!("serverbound 0x{:02x}: {e}", pkt.id);
         let p = &pkt.payload[..];
         if !(0..=ids::LAST_SERVERBOUND).contains(&pkt.id) {
@@ -138,7 +138,7 @@ impl V1_20To1_19_4 {
                 w.raw(r.remaining());
                 w.into_inner()
             }
-            _ => p.to_vec(),
+            _ => std::mem::take(&mut pkt.payload),
         };
         out.push(Packet::new(pkt.id, payload));
         Ok(())
@@ -152,21 +152,21 @@ impl Translator for V1_20To1_19_4 {
     fn to(&self) -> Version {
         Version { protocol: 762 }
     }
-    fn clientbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn clientbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_clientbound(pkt, out),
             // Neither version has a configuration phase; the 1.20.2 step plays it for the client.
             State::Configuration => {
-                out.push(pkt.clone());
+                out.push(Packet::new(pkt.id, std::mem::take(&mut pkt.payload)));
                 Ok(())
             }
         }
     }
-    fn serverbound(&mut self, state: State, pkt: &Packet, out: &mut Vec<Packet>) -> TResult {
+    fn serverbound(&mut self, state: State, pkt: &mut Packet, out: &mut Vec<Packet>) -> TResult {
         match state {
             State::Play => self.play_serverbound(pkt, out),
             State::Configuration => {
-                out.push(pkt.clone());
+                out.push(Packet::new(pkt.id, std::mem::take(&mut pkt.payload)));
                 Ok(())
             }
         }
@@ -179,12 +179,12 @@ mod tests {
 
     fn cb(t: &mut V1_20To1_19_4, id: i32, payload: Vec<u8>) -> Vec<Packet> {
         let mut out = Vec::new();
-        t.clientbound(State::Play, &Packet::new(id, payload), &mut out).unwrap();
+        t.clientbound(State::Play, &mut Packet::new(id, payload), &mut out).unwrap();
         out
     }
     fn sb(t: &mut V1_20To1_19_4, id: i32, payload: Vec<u8>) -> Vec<Packet> {
         let mut out = Vec::new();
-        t.serverbound(State::Play, &Packet::new(id, payload), &mut out).unwrap();
+        t.serverbound(State::Play, &mut Packet::new(id, payload), &mut out).unwrap();
         out
     }
 
@@ -195,8 +195,8 @@ mod tests {
         assert_eq!((out[0].id, &out[0].payload[..]), (35, &[1u8, 2, 3, 4, 5, 6, 7, 8][..]));
         let out = sb(&mut t, 18, vec![8, 7, 6, 5, 4, 3, 2, 1]);
         assert_eq!((out[0].id, &out[0].payload[..]), (18, &[8u8, 7, 6, 5, 4, 3, 2, 1][..]));
-        assert!(t.clientbound(State::Play, &Packet::new(200, vec![]), &mut Vec::new()).is_err());
-        assert!(t.serverbound(State::Play, &Packet::new(-1, vec![]), &mut Vec::new()).is_err());
+        assert!(t.clientbound(State::Play, &mut Packet::new(200, vec![]), &mut Vec::new()).is_err());
+        assert!(t.serverbound(State::Play, &mut Packet::new(-1, vec![]), &mut Vec::new()).is_err());
     }
 
     #[test]
@@ -277,8 +277,8 @@ mod tests {
             let len = (next() % 64) as usize;
             let payload: Vec<u8> = (0..len).map(|_| if next() % 3 == 0 { (next() % 4) as u8 } else { next() as u8 }).collect();
             let id = (next() % 112) as i32;
-            let _ = t.clientbound(State::Play, &Packet::new(id, payload.clone()), &mut Vec::new());
-            let _ = t.serverbound(State::Play, &Packet::new(id % 52, payload), &mut Vec::new());
+            let _ = t.clientbound(State::Play, &mut Packet::new(id, payload.clone()), &mut Vec::new());
+            let _ = t.serverbound(State::Play, &mut Packet::new(id % 52, payload), &mut Vec::new());
         }
     }
 }
