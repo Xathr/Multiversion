@@ -112,7 +112,7 @@ impl V1_20To1_19_4 {
             ids::CONTAINER_SET_SLOT => items::container_set_slot(p).map_err(e)?,
             ids::MERCHANT_OFFERS => items::merchant_offers(p).map_err(e)?,
             ids::UPDATE_ADVANCEMENTS => items::update_advancements(p).map_err(e)?,
-            ids::UPDATE_RECIPES => items::update_recipes(p).map_err(e)?,
+            ids::UPDATE_RECIPES => super::memo::cached(11941, p, || items::update_recipes(p)).map_err(e)?,
             _ => std::mem::take(&mut pkt.payload),
         };
         out.push(Packet::new(pkt.id, payload));

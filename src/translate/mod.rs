@@ -4,6 +4,7 @@
 //! steps needed for a given client, newest first for clientbound and oldest first for
 //! serverbound, one version step at a time.
 
+pub mod memo;
 pub mod table;
 pub mod data_names;
 pub mod data_26_2;

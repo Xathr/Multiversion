@@ -837,7 +837,7 @@ impl V1_18To1_17_1 {
             SET_SCORE => set_score(p).map_err(e)?,
             SOUND | SOUND_ENTITY => sound(p).map_err(e)?,
             UPDATE_ADVANCEMENTS => update_advancements(p).map_err(e)?,
-            UPDATE_RECIPES => update_recipes(p).map_err(e)?,
+            UPDATE_RECIPES => super::memo::cached(11711, p, || update_recipes(p)).map_err(e)?,
             UPDATE_TAGS => update_tags(p).map_err(e)?,
             _ => std::mem::take(&mut pkt.payload),
         };

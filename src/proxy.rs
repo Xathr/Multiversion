@@ -39,6 +39,9 @@ struct ProxyHandler {
     auths: HashMap<u32, (Token, PendingAuth)>,
     /// Pumpkin's last server-list reply and when it arrived (ms).
     status_cache: Option<(u64, String)>,
+    /// How many players are in the game and a sum over who they are, as of the last time the
+    /// list for `/multiversion status` was made.
+    roster: (u64, u64),
     /// The update check or download in progress, and the id the reactor reports it under.
     update: Option<(u32, crate::updater::Flow)>,
     /// The check of Pumpkin's settings that runs once after start.
@@ -378,11 +381,16 @@ pub fn tick() {
     let busy_us = (started.elapsed().as_micros() as u64).saturating_sub((proxy.reactor.waited_ns - waited) / 1000);
     crate::report::add(busy_us);
     CONNECTIONS.store(proxy.handler.conns.len(), std::sync::atomic::Ordering::Relaxed);
-    crate::status::set(
-        proxy.handler.conns.values().filter(|c| matches!(c.phase, Phase::Configuration | Phase::Play) && !c.username.is_empty())
-            .map(|c| crate::status::Online { name: c.username.clone(), protocol: c.client_version.protocol, version: c.client_version.name() })
-            .collect(),
-    );
+    // The list for `/multiversion status` is only made again when who is in the game changed:
+    // a count and a sum over the connections tell, without building anything.
+    let in_game = |c: &&Connection| matches!(c.phase, Phase::Configuration | Phase::Play) && !c.username.is_empty();
+    let roster = proxy.handler.conns.iter().filter(|(_, c)| in_game(c)).fold((0u64, 0u64), |(n, sum), (token, c)| (n + 1, sum.wrapping_add((*token as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ c.client_version.protocol as u64)));
+    if roster != proxy.handler.roster {
+        proxy.handler.roster = roster;
+        crate::status::set(
+            proxy.handler.conns.values().filter(in_game).map(|c| crate::status::Online { name: c.username.clone(), protocol: c.client_version.protocol, version: c.client_version.name() }).collect(),
+        );
+    }
     if proxy.reactor.stopped() {
         log::info(&crate::color::warn(&crate::i18n::console("console.proxy_stopped", &[])));
         *guard = None;
@@ -416,6 +424,7 @@ pub fn start(config: Config) -> Result<bool, String> {
         backend_of: HashMap::new(),
         auths: HashMap::new(),
         status_cache: None,
+        roster: (0, 0),
         rate: crate::ratelimit::ConnectionRate::default(),
         update: None,
         setup: crate::setup_check::Check::default(),

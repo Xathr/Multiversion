@@ -155,14 +155,14 @@ impl Connection {
 
     fn client_pkt(&mut self, pkt: &Packet, out: &mut Vec<Action>) {
         let mut bytes = Vec::new();
-        self.client_out.frame(&pkt.encode(), &mut bytes);
+        self.client_out.frame_packet(pkt.id, &pkt.payload, &mut bytes);
         self.client_out.seal(&mut bytes);
         out.push(Action::SendClient(bytes));
     }
 
     fn backend_pkt(&mut self, pkt: &Packet, out: &mut Vec<Action>) {
         let mut bytes = Vec::new();
-        self.backend_out.frame(&pkt.encode(), &mut bytes);
+        self.backend_out.frame_packet(pkt.id, &pkt.payload, &mut bytes);
         out.push(Action::SendBackend(bytes));
     }
 
@@ -217,7 +217,9 @@ impl Connection {
     fn handle_client_packet(&mut self, raw: Vec<u8>, shared: &Shared, out: &mut Vec<Action>) -> Result<(), String> {
         let mut r = Reader::new(&raw);
         let id = r.varint().map_err(|e| e.to_string())?;
-        let payload = r.remaining().to_vec();
+        let id_len = r.position();
+        let mut payload = raw;
+        payload.drain(..id_len);
         match self.phase {
             Phase::Handshake => self.handle_handshake(id, &payload, shared, out),
             Phase::Status | Phase::StatusBackendHandshake | Phase::StatusBackendWait => self.handle_status(id, &payload, shared, out),
@@ -577,7 +579,9 @@ impl Connection {
     fn handle_backend_packet(&mut self, raw: Vec<u8>, shared: &Shared, out: &mut Vec<Action>) -> Result<(), String> {
         let mut r = Reader::new(&raw);
         let id = r.varint().map_err(|e| e.to_string())?;
-        let payload = r.remaining().to_vec();
+        let id_len = r.position();
+        let mut payload = raw;
+        payload.drain(..id_len);
         match self.phase {
             Phase::StatusBackendWait => {
                 if id == ids::STATUS_C_RESPONSE {
@@ -667,7 +671,7 @@ impl Connection {
                 let pkt = Packet::new(id, payload);
                 let translated = self.translate_clientbound(pkt)?;
                 for p in translated {
-                    self.client_out.frame(&p.encode(), &mut bytes);
+                    self.client_out.frame_packet(p.id, &p.payload, &mut bytes);
                 }
                 self.client_out.seal(&mut bytes);
                 self.held_clientbound.push(bytes);
@@ -756,7 +760,7 @@ impl Connection {
         };
         let mut bytes = Vec::new();
         for p in translated {
-            self.client_out.frame(&p.encode(), &mut bytes);
+            self.client_out.frame_packet(p.id, &p.payload, &mut bytes);
         }
         self.client_out.seal(&mut bytes);
         out.push(Action::SendClient(bytes));
@@ -792,7 +796,7 @@ impl Connection {
                 }
                 _ => {}
             }
-            self.backend_out.frame(&p.encode(), &mut bytes);
+            self.backend_out.frame_packet(p.id, &p.payload, &mut bytes);
         }
         out.push(Action::SendBackend(bytes));
     }

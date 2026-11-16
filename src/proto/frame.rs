@@ -1,7 +1,7 @@
 //! Packet framing: length prefix, optional zlib compression, optional AES/CFB8 encryption.
 //! Works on byte buffers fed by the reactor; no blocking I/O here.
 
-use super::buf::{varint_len, Reader, Writer};
+use super::buf::{varint_len, Reader};
 #[allow(unused_imports)]
 use std::convert::TryInto;
 use flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress, Status};
@@ -124,7 +124,10 @@ impl Inbound {
         let mut r = Reader::new(&frame);
         let data_len = r.varint().map_err(|e| e.to_string())?;
         if data_len == 0 {
-            return Ok(r.remaining().to_vec());
+            let marker = r.position();
+            let mut frame = frame;
+            frame.drain(..marker);
+            return Ok(frame);
         }
         if data_len < 0 || data_len as usize > self.max_frame {
             return Err(format!("invalid uncompressed length {data_len}"));
@@ -171,32 +174,45 @@ pub struct Outbound {
     /// as `Inbound::inflater`.
     deflater: Option<Box<Compress>>,
     cipher: Option<Cfb8Stream>,
+    /// Where a packet is compressed before its length is known; reused from packet to packet.
+    scratch: Vec<u8>,
 }
 
 impl Default for Outbound {
     fn default() -> Self {
-        Self { compression: -1, deflater: None, cipher: None }
+        Self { compression: -1, deflater: None, cipher: None, scratch: Vec::new() }
     }
 }
 
 impl Outbound {
-    /// zlib-compresses `data` completely. `compress_vec` only fills the spare capacity of the
-    /// output vector, so keep going (growing it) until the stream is finished.
-    fn deflate(&mut self, data: &[u8]) -> Vec<u8> {
+    /// zlib-compresses `parts`, one after another as one stream, onto the end of `out`.
+    /// `compress_vec` only fills the spare capacity of the output vector, so keep going
+    /// (growing it) until the stream is finished.
+    fn deflate_into(&mut self, parts: [&[u8]; 2], out: &mut Vec<u8>) {
         let deflater = self.deflater.get_or_insert_with(|| Box::new(Compress::new(Compression::new(1), true)));
         deflater.reset();
-        let mut out = Vec::with_capacity(data.len() / 2 + 64);
-        loop {
-            let before_in = deflater.total_in();
-            let before_out = deflater.total_out();
-            let status = deflater.compress_vec(&data[before_in as usize..], &mut out, FlushCompress::Finish).expect("zlib compression");
-            match status {
-                Status::StreamEnd => return out,
-                Status::Ok | Status::BufError => {
-                    if deflater.total_out() == before_out && deflater.total_in() == before_in {
-                        out.reserve(data.len() + 64);
-                    } else if out.len() == out.capacity() {
-                        out.reserve(out.capacity().max(1024));
+        let total: usize = parts.iter().map(|p| p.len()).sum();
+        out.reserve(total / 2 + 64);
+        let last = parts.len() - 1;
+        for (i, part) in parts.iter().enumerate() {
+            let flush = if i == last { FlushCompress::Finish } else { FlushCompress::None };
+            let start_in = deflater.total_in();
+            loop {
+                let before_in = deflater.total_in();
+                let before_out = deflater.total_out();
+                let taken = (before_in - start_in) as usize;
+                let status = deflater.compress_vec(&part[taken..], out, flush).expect("zlib compression");
+                let all_in = (deflater.total_in() - start_in) as usize == part.len();
+                match status {
+                    Status::StreamEnd => break,
+                    // a part that is not the last is done once it has all been taken in
+                    Status::Ok | Status::BufError if i != last && all_in && out.len() < out.capacity() => break,
+                    Status::Ok | Status::BufError => {
+                        if deflater.total_out() == before_out && deflater.total_in() == before_in {
+                            out.reserve(total + 64);
+                        } else if out.len() == out.capacity() {
+                            out.reserve(out.capacity().max(1024));
+                        }
                     }
                 }
             }
@@ -214,41 +230,84 @@ impl Outbound {
     }
     /// Frames an already-compressed frame body (from `Frame::Compressed`) into `out`.
     pub fn frame_compressed(&mut self, body: &[u8], out: &mut Vec<u8>) {
-        let mut w = Writer::with_capacity(body.len() + 5);
-        w.varint(body.len() as i32);
-        w.raw(body);
-        out.extend_from_slice(&w.buf);
+        let mut head = [0u8; 5];
+        let n = put_varint(&mut head, body.len() as i32);
+        out.reserve(n + body.len());
+        out.extend_from_slice(&head[..n]);
+        out.extend_from_slice(body);
     }
     /// Frames one packet (id+payload) into `out`.
     pub fn frame(&mut self, packet: &[u8], out: &mut Vec<u8>) {
+        self.frame_parts(packet, &[], out);
+    }
+
+    /// Frames a packet given as its id and its payload, without first joining the two.
+    pub fn frame_packet(&mut self, id: i32, payload: &[u8], out: &mut Vec<u8>) {
+        let mut head = [0u8; 5];
+        let n = put_varint(&mut head, id);
+        self.frame_parts(&head[..n], payload, out);
+    }
+
+    /// Frames `first` followed by `rest` as one packet, written straight onto the end of `out`.
+    fn frame_parts(&mut self, first: &[u8], rest: &[u8], out: &mut Vec<u8>) {
+        let len = first.len() + rest.len();
+        let mut head = [0u8; 5];
         if self.compression < 0 {
-            let mut w = Writer::with_capacity(packet.len() + 5);
-            w.varint(packet.len() as i32);
-            w.raw(packet);
-            out.extend_from_slice(&w.buf);
+            let n = put_varint(&mut head, len as i32);
+            out.reserve(n + len);
+            out.extend_from_slice(&head[..n]);
+            out.extend_from_slice(first);
+            out.extend_from_slice(rest);
             return;
         }
-        if packet.len() < self.compression as usize {
-            let mut w = Writer::with_capacity(packet.len() + 6);
-            w.varint(packet.len() as i32 + 1);
-            w.varint(0);
-            w.raw(packet);
-            out.extend_from_slice(&w.buf);
+        if len < self.compression as usize {
+            let n = put_varint(&mut head, len as i32 + 1);
+            out.reserve(n + 1 + len);
+            out.extend_from_slice(&head[..n]);
+            out.push(0);
+            out.extend_from_slice(first);
+            out.extend_from_slice(rest);
             return;
         }
-        let compressed = self.deflate(packet);
-        let inner_len = varint_len(packet.len() as i32) + compressed.len();
-        let mut w = Writer::with_capacity(inner_len + 5);
-        w.varint(inner_len as i32);
-        w.varint(packet.len() as i32);
-        w.raw(&compressed);
-        out.extend_from_slice(&w.buf);
+        // The frame's length comes before the compressed data but is only known after it, so
+        // the data is compressed into a buffer kept for the purpose and then added.
+        let mut compressed = std::mem::take(&mut self.scratch);
+        compressed.clear();
+        self.deflate_into([first, rest], &mut compressed);
+        let inner_len = varint_len(len as i32) + compressed.len();
+        let n = put_varint(&mut head, inner_len as i32);
+        out.reserve(n + inner_len);
+        out.extend_from_slice(&head[..n]);
+        let n = put_varint(&mut head, len as i32);
+        out.extend_from_slice(&head[..n]);
+        out.extend_from_slice(&compressed);
+        // a chunk's worth is kept for the next packet; a rare huge one is not held on to
+        if compressed.capacity() <= 1 << 20 {
+            self.scratch = compressed;
+        }
+    }
+}
+
+/// Writes `value` as a varint at the start of `buf` and returns how many bytes it took.
+fn put_varint(buf: &mut [u8; 5], value: i32) -> usize {
+    let mut v = value as u32;
+    let mut n = 0;
+    loop {
+        let byte = (v & 0x7f) as u8;
+        v >>= 7;
+        if v == 0 {
+            buf[n] = byte;
+            return n + 1;
+        }
+        buf[n] = byte | 0x80;
+        n += 1;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::buf::Writer;
     #[test]
     fn compressed_frames_pass_through_unchanged() {
         let mut from_pumpkin = Outbound { compression: 64, ..Default::default() };
@@ -375,4 +434,60 @@ mod tests {
         dec.decrypt(y);
         assert_eq!(c, msg);
     }
+    #[test]
+    fn a_packet_framed_in_two_parts_is_the_packet_framed_whole() {
+        // sizes around the compression threshold, an empty payload, and a chunk's worth
+        for threshold in [-1, 0, 64, 256] {
+            for size in [0usize, 1, 62, 63, 64, 65, 255, 256, 257, 5000, 300_000] {
+                let payload: Vec<u8> = (0..size).map(|i| ((i * 7) ^ (i >> 5)) as u8).collect();
+                for id in [0i32, 0x26, 0x7f, 0x80, 300] {
+                    let mut whole = Writer::new();
+                    whole.varint(id).raw(&payload);
+                    let mut a = Outbound::default();
+                    a.compression = threshold;
+                    let mut b = Outbound::default();
+                    b.compression = threshold;
+                    let (mut wire_a, mut wire_b) = (vec![9u8], vec![9u8]);
+                    a.frame(&whole.buf, &mut wire_a);
+                    b.frame_packet(id, &payload, &mut wire_b);
+                    // what was already in the output stays, and both ways give a frame that
+                    // reads back as the packet
+                    assert_eq!(wire_a[0], 9);
+                    for wire in [&wire_a, &wire_b] {
+                        let mut ib = Inbound { compression: threshold, ..Default::default() };
+                        ib.feed(&wire[1..]);
+                        assert_eq!(ib.next_packet().unwrap().as_deref(), Some(&whole.buf[..]), "threshold {threshold}, size {size}, id {id}");
+                        assert_eq!(ib.next_packet().unwrap(), None);
+                    }
+                    if threshold < 0 || whole.buf.len() < threshold as usize {
+                        assert_eq!(wire_a, wire_b);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn several_packets_share_one_compressor_and_buffer() {
+        let mut out = Outbound::default();
+        out.compression = 32;
+        let mut wire = Vec::new();
+        let packets: Vec<Vec<u8>> = (0..40usize).map(|n| (0..n * 97).map(|i| (i % 251) as u8).collect()).collect();
+        for (i, p) in packets.iter().enumerate() {
+            out.frame_packet(i as i32, p, &mut wire);
+        }
+        let mut ib = Inbound { compression: 32, ..Default::default() };
+        // fed a few bytes at a time, as a slow connection delivers them
+        for piece in wire.chunks(13) {
+            ib.feed(piece);
+        }
+        for (i, p) in packets.iter().enumerate() {
+            let got = ib.next_packet().unwrap().unwrap();
+            let mut want = Writer::new();
+            want.varint(i as i32).raw(p);
+            assert_eq!(got, want.buf, "packet {i}");
+        }
+        assert_eq!(ib.next_packet().unwrap(), None);
+    }
+
 }

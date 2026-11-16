@@ -49,7 +49,7 @@ impl V1_21_7To1_21_6 {
             ids::EXPLODE => self.misc.explode(items, p).map_err(e)?,
             ids::SOUND | ids::SOUND_ENTITY => self.misc.sound(items, p).map_err(e)?,
             ids::STOP_SOUND => self.misc.stop_sound(items, p).map_err(e)?,
-            ids::RECIPE_BOOK_ADD => self.misc.recipe_book_add(items, p).map_err(e)?,
+            ids::RECIPE_BOOK_ADD => super::memo::cached(12160, p, || self.misc.recipe_book_add(items, p)).map_err(e)?,
             ids::PLACE_GHOST_RECIPE => self.misc.place_ghost_recipe(items, p).map_err(e)?,
             ids::UPDATE_RECIPES => self.misc.update_recipes(items, p).map_err(e)?,
             ids::UPDATE_ADVANCEMENTS => self.misc.update_advancements(items, p).map_err(e)?,

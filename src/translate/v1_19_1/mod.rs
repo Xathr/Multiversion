@@ -125,7 +125,7 @@ impl V1_19_3To1_19_1 {
             new::COOLDOWN => items::cooldown(p).map_err(e)?,
             new::MERCHANT_OFFERS => items::merchant_offers(p).map_err(e)?,
             new::UPDATE_ADVANCEMENTS => items::update_advancements(p).map_err(e)?,
-            new::UPDATE_RECIPES => items::update_recipes(p).map_err(e)?,
+            new::UPDATE_RECIPES => super::memo::cached(11911, p, || items::update_recipes(p)).map_err(e)?,
             _ => std::mem::take(&mut pkt.payload),
         };
         let mapped = ids::play_clientbound(pkt.id).ok_or_else(|| format!("no 1.19.1 equivalent for clientbound play packet 0x{:02x}", pkt.id))?;

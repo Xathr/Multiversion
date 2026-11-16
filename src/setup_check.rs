@@ -52,7 +52,7 @@ impl Check {
     }
 
     fn frame(&mut self, pkt: &Packet, out: &mut Vec<u8>) {
-        self.outbound.frame(&pkt.encode(), out);
+        self.outbound.frame_packet(pkt.id, &pkt.payload, out);
     }
 
     /// Handshake and login start, sent once connected.

@@ -78,7 +78,7 @@ impl V26_1To1_21_11 {
             new::SET_PLAYER_INVENTORY => Some(Misc::single_item(items, p, 1).map_err(e)?),
             new::MERCHANT_OFFERS => Some(Misc::merchant_offers(items, p).map_err(e)?),
             new::COMMANDS => Some(Misc::commands(p).map_err(e)?),
-            new::RECIPE_BOOK_ADD => Some(Misc::recipe_book_add(items, p).map_err(e)?),
+            new::RECIPE_BOOK_ADD => Some(super::memo::cached(121110, p, || Misc::recipe_book_add(items, p)).map_err(e)?),
             new::PLACE_GHOST_RECIPE => Some(Misc::place_ghost_recipe(items, p).map_err(e)?),
             new::UPDATE_RECIPES => Some(Misc::update_recipes(items, p).map_err(e)?),
             new::UPDATE_ADVANCEMENTS => Some(Misc::update_advancements(items, p).map_err(e)?),

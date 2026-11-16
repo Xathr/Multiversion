@@ -47,6 +47,9 @@ struct Conn {
     socket: TcpSocket,
     state: ConnState,
     pending_out: Vec<u8>,
+    /// How much of the start of `pending_out` has been written already. The queue is only
+    /// shifted down once that is most of it, not after every write.
+    sent: usize,
     close_after_flush: bool,
     /// When a connection that is closing is dropped even if the other side has not read what
     /// is queued for it (monotonic nanoseconds).
@@ -162,7 +165,7 @@ impl Reactor {
         socket.start_connect(&self.network, to_wasi_addr(addr)).map_err(|e| format!("connect {addr}: {}", err(e)))?;
         let token = self.next_token;
         self.next_token += 1;
-        self.conns.insert(token, Conn { socket, state: ConnState::Connecting, pending_out: Vec::new(), close_after_flush: false, close_by: None, overflowed: false });
+        self.conns.insert(token, Conn { socket, state: ConnState::Connecting, pending_out: Vec::new(), sent: 0, close_after_flush: false, close_by: None, overflowed: false });
         Ok(token)
     }
 
@@ -172,11 +175,12 @@ impl Reactor {
             if c.overflowed || matches!(c.state, ConnState::Closed) {
                 return;
             }
-            if c.pending_out.len() + data.len() > self.max_pending_out {
+            if c.pending_out.len() - c.sent + data.len() > self.max_pending_out {
                 // The other side is not reading. Free the queue now; the loop closes the
                 // connection and tells the handler.
                 c.overflowed = true;
                 c.pending_out = Vec::new();
+                c.sent = 0;
                 self.overflowed.push(token);
                 return;
             }
@@ -232,7 +236,7 @@ impl Reactor {
     fn try_flush(&mut self, token: Token) -> Result<(), String> {
         let Some(c) = self.conns.get_mut(&token) else { return Ok(()) };
         let ConnState::Open { output, .. } = &c.state else { return Ok(()) };
-        while !c.pending_out.is_empty() {
+        while c.sent < c.pending_out.len() {
             let n = match output.check_write() {
                 Ok(n) => n as usize,
                 Err(StreamError::Closed) => return Err("closed".into()),
@@ -241,9 +245,17 @@ impl Reactor {
             if n == 0 {
                 break;
             }
-            let take = n.min(c.pending_out.len());
-            output.write(&c.pending_out[..take]).map_err(|e| format!("{e:?}"))?;
-            c.pending_out.drain(..take);
+            let take = n.min(c.pending_out.len() - c.sent);
+            output.write(&c.pending_out[c.sent..c.sent + take]).map_err(|e| format!("{e:?}"))?;
+            c.sent += take;
+        }
+        if c.sent == c.pending_out.len() {
+            c.pending_out.clear();
+            c.sent = 0;
+        } else if c.sent >= 256 * 1024 && c.sent * 2 >= c.pending_out.len() {
+            // more than half is gone: move the rest down, once, instead of after every write
+            c.pending_out.drain(..c.sent);
+            c.sent = 0;
         }
         if let Err(e) = output.flush() {
             return Err(format!("{e:?}"));
@@ -340,6 +352,7 @@ impl Reactor {
                                             socket,
                                             state: ConnState::Open { input, output },
                                             pending_out: Vec::new(),
+                                            sent: 0,
                                             close_after_flush: false,
                                             close_by: None,
                                             overflowed: false,

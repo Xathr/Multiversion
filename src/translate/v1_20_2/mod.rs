@@ -98,7 +98,7 @@ impl V1_20_3To1_20_2 {
             new::COOLDOWN => misc::cooldown(p).map_err(e)?,
             new::AWARD_STATS => misc::award_stats(p).map_err(e)?,
             new::UPDATE_ADVANCEMENTS => misc::update_advancements(p).map_err(e)?,
-            new::UPDATE_RECIPES => misc::update_recipes(p).map_err(e)?,
+            new::UPDATE_RECIPES => super::memo::cached(12021, p, || misc::update_recipes(p)).map_err(e)?,
             new::COMMANDS => misc::commands(p).map_err(e)?,
             new::COMMAND_SUGGESTIONS => misc::command_suggestions(p).map_err(e)?,
             new::SYSTEM_CHAT | new::SET_ACTION_BAR_TEXT | new::SET_TITLE_TEXT | new::SET_SUBTITLE_TEXT | new::DISCONNECT | new::SERVER_DATA => {
