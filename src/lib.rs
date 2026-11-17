@@ -262,6 +262,12 @@ mod plugin {
             crate::i18n::set_server_language(&config.language);
             let languages = catalog.languages().len();
             crate::i18n::install(catalog);
+            crate::i18n::set_everywhere(vec![
+                ("versions".into(), crate::translate::allowed_range(&config.versions)),
+                ("server_version".into(), crate::proto::version::BACKEND.name()),
+                ("plugin_version".into(), env!("CARGO_PKG_VERSION").into()),
+            ]);
+            crate::i18n::write_guide(&lang_folder);
             // Pumpkin lets a plugin write only its own data folder, so the pumpkin.toml settings
             // it needs are written out ready to paste, and checked for at runtime.
             let snippet = crate::config::pumpkin_snippet(&config);

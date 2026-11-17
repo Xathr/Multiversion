@@ -282,6 +282,40 @@ start: English, German, Spanish, French, Italian, Japanese, Korean, Dutch, Polis
 - **To reword a message**, edit it in the file. A file only has to hold the texts it changes:
   anything it leaves out comes from the built-in text, then from English.
 - A broken file is reported in the console and skipped; the others still load.
+- `README.txt` in the same folder lists the colour codes and, for every message, the
+  placeholders it can use. It is written again on every start, so it always matches the plugin.
+
+### Colours
+
+Put a code in front of the text it should colour. It works in the console, in chat and on the
+kick screen:
+
+| Code | Meaning |
+|---|---|
+| `&0` to `&f` | the game's sixteen colours (`&c` red, `&a` green, `&e` yellow, `&7` grey, ...) |
+| `&#rrggbb` | any colour, for example `&#ff8800` |
+| `&l` `&o` `&n` `&m` `&k` | bold, italic, underlined, struck through, scrambled |
+| `&r` | back to normal |
+| `&&` | a plain `&` |
+
+A colour ends the bold, italic and so on before it, as in the game: write `&c&l` for bold red.
+`§` works in place of `&`. With `console_colors = false` the codes are left out of the console.
+Players on versions before 1.16 see white where a `&#rrggbb` colour is used.
+
+```json
+"kick.server_starting": "&6The server is starting up. &7Please try again in a moment."
+```
+
+### Placeholders
+
+A `{placeholder}` is replaced when the message is shown. Each message has its own (listed in
+`README.txt`), and these work in every message:
+
+| Placeholder | Stands for |
+|---|---|
+| `{versions}` | the game versions that may join, like `1.17-26.3` |
+| `{server_version}` | the game version of the server itself |
+| `{plugin_version}` | the version of this plugin |
 - **After a plugin update** the files the plugin wrote are brought up to date: new texts are
   added, and a text you never changed takes the plugin's new wording. A text you reworded is
   kept as you wrote it.

@@ -54,6 +54,9 @@ pub fn valid_code(code: &str) -> bool {
     part(parts.next(), 4) && part(parts.next(), 6) && parts.next().is_none()
 }
 
+/// The first protocol (1.16) whose clients can show a colour given as `#rrggbb`.
+const HEX_COLOURS_FROM: i32 = 735;
+
 /// Puts values in a text's `{placeholders}`.
 pub fn fill(text: &str, values: &[(&str, &str)]) -> String {
     let mut out = text.to_string();
@@ -136,7 +139,14 @@ impl Catalog {
     pub fn kick_component(&self, language: &str, protocol: i32, key: &str, values: &[(&str, &str)]) -> String {
         let auto = normalise(language) == "auto";
         let own = self.get(if auto { DEFAULT } else { language }, key);
-        let text = fill(own, values);
+        // A text with colour codes goes out as coloured parts; one without is sent as it was.
+        if crate::color::has_codes(own) {
+            let json = crate::color::with_colours(|| crate::color::chat_json(&fill_all(&crate::color::codes(own), values)));
+            // Game versions before 1.16 know the sixteen named colours only; one of them
+            // would fail to read a kick message with any other colour in it.
+            return if protocol < HEX_COLOURS_FROM { crate::color::without_hex(&json) } else { json };
+        }
+        let text = fill_all(own, values);
         // A message the admin has reworded in the English file is theirs: the game's words
         // would replace it.
         let reworded = built_in_english(key).is_some_and(|built_in| built_in != own);
@@ -334,9 +344,91 @@ pub fn painted(key: &str, base: impl Fn(&str) -> String, values: &[(&str, &str)]
     out
 }
 
-/// The text for `key` in a player's language, with `values` filled in.
+/// The text for `key` in a player's language, with `values` filled in. Colour codes in the
+/// text are turned into colours first, so nothing in a value is taken for a code.
 pub fn text(locale: &str, key: &str, values: &[(&str, &str)]) -> String {
-    with(|catalog| fill(catalog.get(locale, key), values))
+    with(|catalog| fill_all(&crate::color::codes(catalog.get(locale, key)), values))
+}
+
+static EVERYWHERE: RwLock<Vec<(String, String)>> = RwLock::new(Vec::new());
+
+/// The placeholders every message may use, whatever it is about (see [`EVERYWHERE_NAMES`]).
+pub fn set_everywhere(values: Vec<(String, String)>) {
+    *EVERYWHERE.write().unwrap_or_else(|e| e.into_inner()) = values;
+}
+
+/// What [`set_everywhere`] is given: name and what it stands for.
+pub const EVERYWHERE_NAMES: [(&str, &str); 3] = [
+    ("versions", "the game versions that may join, like 1.17-26.3"),
+    ("server_version", "the game version of the server itself"),
+    ("plugin_version", "the version of this plugin"),
+];
+
+/// Fills a message's own values, then the ones every message may use.
+fn fill_all(text: &str, values: &[(&str, &str)]) -> String {
+    let filled = fill(text, values);
+    if !filled.contains('{') {
+        return filled;
+    }
+    let everywhere = EVERYWHERE.read().unwrap_or_else(|e| e.into_inner());
+    let pairs: Vec<(&str, &str)> = everywhere.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+    fill(&filled, &pairs)
+}
+
+/// The names in a text's `{placeholders}`, in the order they appear, each once.
+pub fn placeholders(text: &str) -> Vec<&str> {
+    let mut found: Vec<&str> = Vec::new();
+    for name in text.split('{').skip(1).filter_map(|rest| rest.split_once('}')).map(|(name, _)| name) {
+        if !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '_') && !found.contains(&name) {
+            found.push(name);
+        }
+    }
+    found
+}
+
+/// The guide written next to the language files: the colour codes, and for every message the
+/// placeholders it can use. Made from the built-in English, so it always matches the plugin.
+pub fn guide() -> String {
+    let english: BTreeMap<String, String> = BUNDLED.iter().find(|(code, _)| *code == DEFAULT).and_then(|(_, json)| serde_json::from_str(json).ok()).unwrap_or_default();
+    let mut out = String::from(
+        "Multiversion language files\n\
+         ===========================\n\n\
+         One file per language, named after the game's language code (en_us.json, de_de.json).\n\
+         Edit a text and restart the server. This file is written again on every start.\n\n\
+         COLOURS\n\
+         -------\n\
+         Put a code in front of the text it should colour. It works in the console, in chat\n\
+         and on the kick screen.\n\n\
+         \x20 &0 black        &4 dark red      &8 dark grey     &c red\n\
+         \x20 &1 dark blue    &5 dark purple   &9 blue          &d light purple\n\
+         \x20 &2 dark green   &6 gold          &a green         &e yellow\n\
+         \x20 &3 dark aqua    &7 grey          &b aqua          &f white\n\n\
+         \x20 &#rrggbb  any colour, for example &#ff8800\n\
+         \x20 &l bold   &o italic   &n underlined   &m struck through   &k scrambled\n\
+         \x20 &r  back to normal        &&  a plain & sign\n\n\
+         A colour ends the bold, italic and so on before it, as in the game: write &c&l for\n\
+         bold red, not &l&c. The section sign works in place of &.\n\n\
+         Example:  \"kick.server_starting\": \"&6The server is starting up. &7Please try again in a moment.\"\n\n\
+         PLACEHOLDERS\n\
+         ------------\n\
+         A {placeholder} is replaced when the message is shown. These work in every message:\n\n",
+    );
+    for (name, meaning) in EVERYWHERE_NAMES {
+        out.push_str(&format!("  {:<18} {meaning}\n", format!("{{{name}}}")));
+    }
+    out.push_str("\nEach message also has its own, listed here. A message without a line has none.\n\n");
+    for (key, text) in &english {
+        let own = placeholders(text);
+        if !own.is_empty() {
+            out.push_str(&format!("  {key:<36} {}\n", own.iter().map(|n| format!("{{{n}}}")).collect::<Vec<_>>().join(" ")));
+        }
+    }
+    out
+}
+
+/// Writes [`guide`] into the language folder as README.txt.
+pub fn write_guide(folder: &str) {
+    let _ = std::fs::write(format!("{folder}/README.txt"), guide());
 }
 
 /// A kick message as a JSON text component (see [`Catalog::kick_component`]).
@@ -550,6 +642,41 @@ mod tests {
         // with nothing on record only missing texts are added: an old text may be the admin's
         assert_eq!(brought_up_to_date(&have, None, &bundled), Some(texts(&[("a", "old a"), ("b", "mine"), ("c", "new c"), ("x", "own key")])));
         assert_eq!(brought_up_to_date(&bundled, Some(&bundled), &bundled), None);
+    }
+
+    #[test]
+    fn colour_codes_and_shared_placeholders_in_a_language_file() {
+        let mut catalog = Catalog::bundled();
+        catalog.add("en_us", r#"{"kick.server_starting": "&6Starting. &7Join {versions} later, {player}.", "kick.internal_error": "v{plugin_version} on {server_version}"}"#).unwrap();
+        set_everywhere(vec![("versions".into(), "1.17-26.3".into()), ("server_version".into(), "26.3".into()), ("plugin_version".into(), "9.9".into())]);
+        // a coloured text goes out as coloured parts; a value is never read as a code
+        let json = catalog.kick_component("en_us", 767, "kick.server_starting", &[("player", "&cRed")]);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["extra"][0], serde_json::json!({ "text": "Starting. ", "color": "gold" }));
+        assert_eq!(v["extra"][1], serde_json::json!({ "text": "Join 1.17-26.3 later, &cRed.", "color": "gray" }));
+        // a client older than 1.16 gets a colour it knows in place of a #rrggbb one
+        catalog.add("en_us", r#"{"kick.username_mismatch": "&#ff8800Orange &cred"}"#).unwrap();
+        assert!(catalog.kick_component("en_us", 767, "kick.username_mismatch", &[]).contains("#ff8800"));
+        let old: serde_json::Value = serde_json::from_str(&catalog.kick_component("en_us", 47, "kick.username_mismatch", &[])).unwrap();
+        assert_eq!((old["extra"][0]["color"].as_str(), old["extra"][1]["color"].as_str()), (Some("white"), Some("red")));
+        // one without codes is the plain text it always was, with the shared values filled in
+        assert_eq!(catalog.kick_component("en_us", 767, "kick.internal_error", &[]), r#"{"text":"v9.9 on 26.3"}"#);
+        // a message's own value wins over a shared one of the same name
+        assert_eq!(fill_all("{versions} {server_version}", &[("versions", "mine")]), "mine 26.3");
+        set_everywhere(Vec::new());
+        assert_eq!(fill_all("{versions}", &[]), "{versions}");
+    }
+
+    #[test]
+    fn the_guide_lists_every_message_with_placeholders() {
+        let text = guide();
+        assert!(text.contains("&#rrggbb") && text.contains("{plugin_version}"));
+        assert!(text.contains("kick.unsupported_version") && text.contains("{versions} {client}"));
+        let line = text.lines().find(|l| l.trim_start().starts_with("console.session_check_failed")).unwrap();
+        assert!(line.contains("{player} {error}"), "{line}");
+        // a message with nothing to fill in has no line
+        assert!(!text.lines().any(|l| l.trim_start().starts_with("console.joined ")));
+        assert_eq!(super::placeholders("a {b} {c_d} {b} {} {Not} }{"), ["b", "c_d"]);
     }
 
 }

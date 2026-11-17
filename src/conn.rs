@@ -175,8 +175,9 @@ impl Connection {
     }
 
     fn kick_json(&mut self, message: &str, out: &mut Vec<Action>) {
-        let json = serde_json::json!({ "text": message }).to_string();
-        self.kick_component(&json, message, out);
+        // a coloured console text is sent as coloured parts, never as raw console codes
+        let json = if message.contains('\x1b') { color::chat_json(message) } else { serde_json::json!({ "text": message }).to_string() };
+        self.kick_component(&json, &color::strip(message), out);
     }
 
     /// Sends a login disconnect (a JSON text component, in all supported versions) and closes.
@@ -291,11 +292,11 @@ impl Connection {
                 if !translate::is_supported(self.client_version) || !shared.config.versions.permits(self.client_version) {
                     self.phase = Phase::LoginStart; // so the kick is delivered as a login disconnect
                     // Sent before the client has said anything about itself, and to clients of any
-                    // age: plain text in the server's language.
+                    // age: in the server's language, with any colours as ones every version knows.
                     let values = [("versions", translate::allowed_range(&shared.config.versions)), ("client", self.client_version.name())];
                     let values: Vec<(&str, &str)> = values.iter().map(|(name, value)| (*name, value.as_str())).collect();
-                    let msg = crate::i18n::console("kick.unsupported_version", &values);
-                    return Err(msg);
+                    self.kick_key("kick.unsupported_version", &values, out);
+                    return Ok(());
                 }
                 self.chain = Chain::for_client(self.client_version);
                 self.phase = Phase::LoginStart;
