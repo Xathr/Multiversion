@@ -7,6 +7,7 @@ pub mod entity;
 pub mod ids;
 pub mod items;
 pub mod misc;
+pub mod text;
 pub mod world;
 
 use super::{data_26_2, Packet, State, TResult, Translator};
@@ -175,7 +176,19 @@ impl V26_3To26_2 {
             new::UPDATE_ADVANCEMENTS => Some(self.misc.update_advancements(items, p).map_err(e)?),
             new::MAP_ITEM_DATA => Some(self.misc.map_item_data(p).map_err(e)?),
             new::OPEN_SIGN_EDITOR => Some(self.misc.open_sign_editor(p).map_err(e)?),
-            new::PLAYER_CHAT => Some(self.misc.player_chat(p).map_err(e)?),
+            new::PLAYER_CHAT => Some(self.misc.player_chat(items, p).map_err(e)?),
+            // Text components: hover events name items and entities (see `text`).
+            new::SYSTEM_CHAT | new::SET_TITLE_TEXT | new::SET_SUBTITLE_TEXT | new::SET_ACTION_BAR_TEXT | new::DISCONNECT | new::SERVER_DATA => {
+                Some(text::leading_text(items, p).map_err(e)?)
+            }
+            new::DISGUISED_CHAT => Some(text::disguised_chat(items, p).map_err(e)?),
+            new::BOSS_EVENT => Some(text::boss_event(items, p).map_err(e)?),
+            new::TAB_LIST => Some(text::tab_list(items, p).map_err(e)?),
+            new::SET_OBJECTIVE => Some(text::set_objective(items, p).map_err(e)?),
+            new::SET_SCORE => Some(text::set_score(items, p).map_err(e)?),
+            new::SET_PLAYER_TEAM => Some(text::set_player_team(items, p).map_err(e)?),
+            new::PLAYER_INFO_UPDATE => Some(text::player_info_update(items, p).map_err(e)?),
+            new::PLAYER_COMBAT_KILL => Some(text::player_combat_kill(items, p).map_err(e)?),
             new::ADD_TRANSIENT_BLOCK | new::POST_EFFECTS => return Ok(()),
             _ => None,
         };
@@ -195,6 +208,7 @@ impl V26_3To26_2 {
             },
             new::CONFIG_UPDATE_TAGS => World::update_tags(&self.to_client, &pkt.payload).map_err(e)?,
             new::CONFIG_POST_EFFECTS => return Ok(()),
+            new::CONFIG_DISCONNECT => text::leading_text(&self.to_client, &pkt.payload).map_err(e)?,
             _ => std::mem::take(&mut pkt.payload),
         };
         let mapped = ids::config_clientbound(pkt.id).ok_or_else(|| format!("no 26.2 config packet for 0x{:02x}", pkt.id))?;

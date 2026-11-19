@@ -550,7 +550,7 @@ impl Misc {
         Ok(w.into_inner())
     }
 
-    pub fn player_chat(&self, payload: &[u8]) -> Result<Vec<u8>> {
+    pub fn player_chat(&self, items: &Items, payload: &[u8]) -> Result<Vec<u8>> {
         let mut r = Reader::new(payload);
         let mut w = Writer::with_capacity(payload.len());
         w.varint(r.varint()?);
@@ -568,12 +568,17 @@ impl Misc {
                 w.raw(r.bytes(256)?);
             }
         }
-        Items::copy_opt_nbt(&mut r, &mut w)?; // unsigned content (optional)
+        super::text::copy_opt_text(items, &mut r, &mut w)?; // unsigned content (optional)
         let filter = Items::copy_varint(&mut r, &mut w)?;
         if filter == 2 {
             super::world::World::bitset_to_longs(&mut r, &mut w)?;
         }
-        w.raw(r.remaining()); // chat type holder, names
+        // chat type holder; an inline chat type (0) is left as is together with the names
+        if Items::copy_varint(&mut r, &mut w)? != 0 {
+            super::text::copy_text(items, &mut r, &mut w)?; // sender name
+            super::text::copy_opt_text(items, &mut r, &mut w)?; // target name
+        }
+        w.raw(r.remaining());
         Ok(w.into_inner())
     }
 }

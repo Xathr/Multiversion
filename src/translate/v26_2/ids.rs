@@ -4,6 +4,20 @@
 pub mod new {
     // clientbound play (26.3)
     pub const ADD_ENTITY: i32 = 1;
+    pub const BOSS_EVENT: i32 = 9;
+    pub const DISCONNECT: i32 = 32;
+    pub const DISGUISED_CHAT: i32 = 33;
+    pub const PLAYER_COMBAT_KILL: i32 = 69;
+    pub const PLAYER_INFO_UPDATE: i32 = 71;
+    pub const SERVER_DATA: i32 = 88;
+    pub const SET_ACTION_BAR_TEXT: i32 = 89;
+    pub const SET_OBJECTIVE: i32 = 108;
+    pub const SET_PLAYER_TEAM: i32 = 111;
+    pub const SET_SCORE: i32 = 112;
+    pub const SET_SUBTITLE_TEXT: i32 = 114;
+    pub const SET_TITLE_TEXT: i32 = 116;
+    pub const SYSTEM_CHAT: i32 = 124;
+    pub const TAB_LIST: i32 = 125;
     pub const ANIMATE: i32 = 2;
     pub const BLOCK_ENTITY_DATA: i32 = 6;
     pub const BLOCK_EVENT: i32 = 7;
@@ -48,6 +62,7 @@ pub mod new {
     pub const UPDATE_TAGS: i32 = 137;
     pub const PLAY_C_COUNT: i32 = 144;
     // clientbound config (26.3)
+    pub const CONFIG_DISCONNECT: i32 = 2;
     pub const CONFIG_REGISTRY_DATA: i32 = 7;
     pub const CONFIG_POST_EFFECTS: i32 = 10;
     pub const CONFIG_UPDATE_TAGS: i32 = 14;
